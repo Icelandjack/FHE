@@ -11,6 +11,14 @@ import Text.Printf
 import Data.Word
 import Control.Monad
 
+newtype Poly = Poly [Int] deriving Show
+
+arbitrarySubset ∷ [a] → Gen [a]
+arbitrarySubset = filterM (const arbitrary)
+
+instance Arbitrary Poly where
+  arbitrary = Poly <$> arbitrarySubset [1..7] -- x¹ + …+ x⁷
+
 -- data Parameters = Param {
 --   γ ∷ Integer,    -- Bit-length of integers in public key
 --   η ∷ Integer,    -- Bit-length of secret key
@@ -68,7 +76,7 @@ keygen η = do
   
   return $ SharedSecretKey $ (+3) $ head $ filter odd $ randomRs range gen
 
-encrypt ∷ Integer → SharedSecretKey → Bit → IO Integer
+
 encrypt η (SharedSecretKey p) (toInt → m) = do
 
   let rExponent ∷ Integer
@@ -118,24 +126,35 @@ prop_plus seed bit = monadicIO $ do
 
   times ∷ Integer ← pick $ choose (1, 10)
   
-  msg ∷ [Bit] ← pick $ vector (fromIntegral times)
-  
+  msgs ∷ [Bit] ← pick $ vector (fromIntegral times)
+
   key ← run (keygen η)
 
-  ciphers ∷ [Integer] ← run $ mapM (encrypt η key) msg
-  -- ciphers ∷ [[Integer]] ← run $ replicateM (fromIntegral times) (mapM (encrypt η key) msg)
+  ciphers ← run (mapM (encrypt η key) msgs)
+
+  let summation       = sum ciphers
+      evaledSummation = decrypt key summation
+
+  assert (evaledSummation == fromInt (sum (map toInt msgs) `mod` 2))
+
+prop_mult ∷ Word8 → Bit → Property
+prop_mult seed bit = monadicIO $ do
+  let η = 8 + (fromIntegral (seed `mod` 40))
+
+  times ∷ Integer ← pick $ choose (1, 10)
   
-  -- bits ← decrypt key (mult4 cipher)
+  msgs ∷ [Bit] ← pick $ vector (fromIntegral times)
 
-  -- assert (mult4 (toInt bit) == toInt bit')
-  undefined
+  key ← run (keygen η)
 
--- enc ∷ Integer → Bit → IO Integer
--- enc η msg = do
---   -- let η = 8 + (fromIntegral (seed `mod` 40))
-  
---   key ← keygen η
+  ciphers ← run (mapM (encrypt η key) msgs)
 
---   encrypt η key msg
+  let prod          = product ciphers
+      evaledProduct = decrypt key prod
 
+  assert (evaledProduct == fromInt (product (map toInt msgs) `mod` 2))
+
+evaluatePoly ∷ Num a ⇒ Poly → a → a
+evaluatePoly (Poly [])     a = a
+evaluatePoly (Poly (x:xs)) a = evaluatePoly (Poly xs) (a + product (replicate x a))
 
