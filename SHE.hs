@@ -51,9 +51,7 @@ instance Arbitrary SharedSecretKey where
 data Bit = O | I deriving (Eq, Show)
 
 instance Arbitrary Bit where
-  arbitrary = do
-    bool ← arbitrary
-    return (if bool then I else O)
+  arbitrary = elements [O, I]
 
 toInt ∷ Bit → Integer
 toInt O = 0
@@ -77,6 +75,7 @@ keygen η = do
   return $ SharedSecretKey $ (+3) $ head $ filter odd $ randomRs range gen
 
 
+encrypt :: Integer -> SharedSecretKey -> Bit -> IO Integer
 encrypt η (SharedSecretKey p) (toInt → m) = do
 
   let rExponent ∷ Integer
