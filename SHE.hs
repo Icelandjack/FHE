@@ -1,4 +1,4 @@
-{-# LANGUAGE ViewPatterns #-}
+{-# LANGUAGE UnicodeSyntax, ScopedTypeVariables, ViewPatterns #-}
 
 -- http://people.csail.mit.edu/shaih/pubs/FHE-winter-school.pdf
 -- http://research.microsoft.com/pubs/146975/ihe.pdf
