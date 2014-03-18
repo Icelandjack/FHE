@@ -6,8 +6,14 @@
 A preliminary implementation of the somewhat homomorphic encryption
 scheme (SHE) described in Gentry's original thesis[1] in Haskell.
 
-* Related Work
+* DSL Design
+When designing the DSL a high-level design was ...
 
+Inspired by Cryptol with type-level naturals[2]
+
+: split : {a b c} [a*b]c -> [a][b]c
+
+* Related Work
 + “[[https://eprint.iacr.org/2011/561.pdf][A Domain-Specific Language for Computing on Encrypted Data]]”
 Haskell-based EDSL 
 
@@ -19,3 +25,4 @@ Equivalence Checking Paper (Apr 2008)
 
 * References
 [1] http://cs.au.dk/~stm/local-cache/gentry-thesis.pdf A Fully Homomorphic Encryption Scheme
+[2] http://gauss.ececs.uc.edu/Courses/c4003/lectures/Cryptol/Cryptol-Tutorial.pdf

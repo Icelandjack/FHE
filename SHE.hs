@@ -1,4 +1,4 @@
-{-# LANGUAGE ViewPatterns #-}
+{-# LANGUAGE UnicodeSyntax, ScopedTypeVariables, ViewPatterns #-}
 
 -- http://crypto.stanford.edu/craig/easy-fhe.pdf
 -- http://people.csail.mit.edu/shaih/pubs/FHE-winter-school.pdf
@@ -52,10 +52,15 @@
 
 -- data Bit = O | I deriving (Eq, Show)
 
+<<<<<<< HEAD
 -- instance Arbitrary Bit where
 --   arbitrary = do
 --     bool ← arbitrary
 --     return (if bool then I else O)
+=======
+instance Arbitrary Bit where
+  arbitrary = elements [O, I]
+>>>>>>> 65ff8d67bd660a158fe15a97f9ca59a8c0dc65c8
 
 -- newtype Name = Name String deriving Show 
 
@@ -88,6 +93,11 @@
 --   -- WTF
 --   return $ SharedSecretKey $ (+3) $ head $ filter odd $ randomRs range gen
 
+<<<<<<< HEAD
+=======
+encrypt :: Integer -> SharedSecretKey -> Bit -> IO Integer
+encrypt η (SharedSecretKey p) (toInt → m) = do
+>>>>>>> 65ff8d67bd660a158fe15a97f9ca59a8c0dc65c8
 
 -- encrypt η (SharedSecretKey p) (toInt → m) = do
 
