@@ -13,6 +13,18 @@ Inspired by Cryptol with type-level naturals[2]
 
 : split : {a b c} [a*b]c -> [a][b]c
 
+: KeyExpansion_128 : [4][32] -> [11][4][4][8];
+: KeyExpansion_128 keyAsWords = [| transpose s || s <- ss ]]
+:   where {
+:     ss = groupBy(4, [| reverse (splitBy(4, w)) || w <- ws |]);
+:     ws = keyAsWords # ([| nextWord_128(i, w, w')
+:                        || i  <- [4..43]
+:                        || w  <- ws
+:                        || w' <- drop(3, ws)
+:                        |]);
+:   };
+
+
 * Related Work
 + “[[https://eprint.iacr.org/2011/561.pdf][A Domain-Specific Language for Computing on Encrypted Data]]”
 Haskell-based EDSL 
