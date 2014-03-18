@@ -1,0 +1,21 @@
+* Abstract
+
+* Introduction
+
+* Preliminary implementation
+A preliminary implementation of the somewhat homomorphic encryption
+scheme (SHE) described in Gentry's original thesis[1] in Haskell.
+
+* Related Work
+
++ “[[https://eprint.iacr.org/2011/561.pdf][A Domain-Specific Language for Computing on Encrypted Data]]”
+Haskell-based EDSL 
+
+Original Domain Analysis paper for the CSP project (2001) [confidential]
+
+Notes on performance of FPGA implementations of AES and DES (July, 2006)
+See also IP Cores survey from George Mason U (Dec, 2005) 
+Equivalence Checking Paper (Apr 2008) 
+
+* References
+[1] http://cs.au.dk/~stm/local-cache/gentry-thesis.pdf A Fully Homomorphic Encryption Scheme
