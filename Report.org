@@ -28,7 +28,7 @@ Inspired by Cryptol with type-level naturals[2]
 + “[[https://eprint.iacr.org/2011/561.pdf][A Domain-Specific Language for Computing on Encrypted Data]]”
 Haskell-based EDSL 
 + “Generating Fast Multipliers Using Clever Circuits”
-+ “[[https://drive.google.com/file/d/0ByALnB6PvvHEdlhGa01hQTcyckU/edit?usp=sharing][Making Domain-Specific Hardware Synthesis Tools Cost-Efficient]]”: The paper presents a method for efficient development of High-Level Synthesis (HLS) tools, which are normally very costly to create.
++ “[[https://drive.google.com/file/d/0ByALnB6PvvHEdlhGa01hQTcyckU/edit?usp=sharing][Making Domain-Specific Hardware Synthesis Tools Cost-Efficient]]”: The paper presents a method for efficient development of High-Level Synthesis (HLS) tools, which are normally very costly to create. The method is based on Lightweight Modular Staging, which is a compiler framework in Scala.
 
 Original Domain Analysis paper for the CSP project (2001) [confidential]
 
