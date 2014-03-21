@@ -25,8 +25,6 @@ Inspired by Cryptol with type-level naturals[2]
 :   };
 
 * Related Work
-
-
 + “[[https://eprint.iacr.org/2011/561.pdf][A Domain-Specific Language for Computing on Encrypted Data]]”
 Haskell-based EDSL 
 + “Generating Fast Multipliers Using Clever Circuits”
@@ -37,7 +35,6 @@ Original Domain Analysis paper for the CSP project (2001) [confidential]
 Notes on performance of FPGA implementations of AES and DES (July, 2006)
 See also IP Cores survey from George Mason U (Dec, 2005) 
 Equivalence Checking Paper (Apr 2008) 
-
 * References
 [1] http://cs.au.dk/~stm/local-cache/gentry-thesis.pdf A Fully Homomorphic Encryption Scheme
 [2] http://gauss.ececs.uc.edu/Courses/c4003/lectures/Cryptol/Cryptol-Tutorial.pdf
