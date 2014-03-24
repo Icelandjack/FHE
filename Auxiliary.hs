@@ -1,3 +1,4 @@
+{-# LANGUAGE UnicodeSyntax #-}
 module Auxiliary (nint, remainder) where
 
 import Test.QuickCheck
@@ -51,6 +52,20 @@ prop_remainder(Positive p) z =
   -- abs p > 4 ==> 
   u == 0.0 || (-fromInteger p/2 <= u && u <= fromInteger p/2)
   where u = fromInteger (remainder(p) z)
+
+-- remainder(p) z ∈ (-p/2, p/2]
+-- in other words remainder(p) z ∈ ((negate p) `div` 2, p `div` 2]
+prop_remainder2 :: Positive Integer → Integer → Bool
+prop_remainder2(Positive p) z = ((negate p) `div` 2) < u && u <= p `div` 2
+  where
+  u = remainder(p) z
+
+prop_remainder3 :: Positive Integer → Integer → Bool
+prop_remainder3(Positive p) z = u == z - q * p
+  where
+  u = remainder(p) z
+  q = quotient(p) z
+
 
 -- prop_r(Positive p) z = (abs z) > 2 && (abs p) > 2 ==> let
 --   u = remainder(p) z
