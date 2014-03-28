@@ -2,6 +2,7 @@
 {-# LANGUAGE NamedFieldPuns  #-}
 {-# LANGUAGE ViewPatterns    #-}
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE UnicodeSyntax   #-}
 
 import System.Random
 import Control.Monad
@@ -169,7 +170,7 @@ encrypt Param{..} (PublicKey (x₀:xs)) (fromBit → m) = do
   subsetSum ← sum <$> randomSubset xs
 
   -- Random integer r in (-2^ρ′, 2^ρ′)
-  r ∷ Integer ← randomRIO (-2^ρ' + 1, 2^ρ' - 1)
+  r ← randomRIO (-2^ρ' + 1, 2^ρ' - 1)
 
   -- Output c ← [m + 2r + 2 Σi∈S x_i]x₀
   return (remainder x₀ (m + 2*r + 2*subsetSum))

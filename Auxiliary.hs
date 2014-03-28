@@ -1,3 +1,4 @@
+{-# LANGUAGE UnicodeSyntax   #-}
 module Auxiliary (nintRoundHalfUp, remainder, quotient) where
 
 import Test.QuickCheck
@@ -9,8 +10,10 @@ nintRoundHalfUp z = ceiling (z - 0.5) -- round z -- floor (z + 0.5)
 infixl 7 `quotient`
 -- Quotient
 quotient ∷ Integer → Integer → Integer
-quotient(0) z = error "Exception: divide by zero"
-quotient(p) z = nintRoundHalfUp (fromIntegral z / fromIntegral p) 
+quotient(p) z = (z + (p - 1) `div` 2) `div` p
+
+--quotient(0) z = error "Exception: divide by zero"
+--quotient(p) z = nintRoundHalfUp (fromIntegral z / fromIntegral p) 
 
 infixl 7 `remainder`
 -- Remainder
