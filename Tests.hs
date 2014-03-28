@@ -1,3 +1,4 @@
+{-# LANGUAGE UnicodeSyntax   #-}
 import Auxiliary 
 import Test.QuickCheck
 
@@ -26,7 +27,7 @@ prop_remainder(Positive p) z =
   where
     u = fromInteger (remainder(p) z)
 
-prop_r(Positive p) z = undefined where
+prop_r(Positive p) z = negate p `div` 2 < u && u <= p `div` 2 where
   u = remainder(p) z
   
 --                      (abs z) > 2 && (abs p) > 2 ==> let
@@ -51,5 +52,6 @@ tests = do
   quickCheck prop_down
   quickCheck prop_up
   quickCheck prop_remainder
+  quickCheck prop_r
   quickCheck prop_quotRemConsistency
   quickCheck prop_remInRange
