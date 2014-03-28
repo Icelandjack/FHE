@@ -1,4 +1,4 @@
-{-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE RankNTypes      #-}
 {-# LANGUAGE NamedFieldPuns  #-}
 {-# LANGUAGE ViewPatterns    #-}
 {-# LANGUAGE RecordWildCards #-}
