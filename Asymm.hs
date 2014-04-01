@@ -132,7 +132,7 @@ distribution Param{γ, ρ} p = do
 keygen ∷ Param → IO (SecretKey, PublicKey)
 keygen param@Param{..} = do
   p  ← secretKey
-  pk ← publicKey p
+  pk ← publicKey param p
   
   return (p, pk) where
 
@@ -147,18 +147,18 @@ keygen param@Param{..} = do
         Right secretKey → {- print secretKey >> -} return secretKey
         Left  err       → {- putStrLn err    >> -} secretKey
 
-    publicKey ∷ SecretKey → IO PublicKey
-    publicKey sk@(SecretKey p) = do
-      -- x_i ←$- D(p) for i = 0,…,τ
-      xs ← replicateM (fromInteger τ+1) (distribution param p)
-  
-      -- Relabel so that x₀ is the largest
-      let maxVal = maximum xs
-          xs'    = maxVal : delete maxVal xs
+publicKey ∷ Param → SecretKey → IO PublicKey
+publicKey param@Param{..} sk@(SecretKey p) = do
+  -- x_i ←$- D(p) for i = 0,…,τ
+  xs ← replicateM (fromInteger τ+1) (distribution param p)
 
-      case mkPublicKey param sk xs' of
-        Right pk → return pk
-        Left err → {- putStrLn err >> -} publicKey sk
+  -- Relabel so that x₀ is the largest
+  let maxVal = maximum xs
+      xs'    = maxVal : delete maxVal xs
+
+  case mkPublicKey param sk xs' of
+    Right pk → return pk
+    Left err → {- putStrLn err >> -} publicKey param sk
 
 -- | Encrypt a bit m ∈ {0, 1}
 encrypt ∷ Param → PublicKey → Bit → IO Integer
@@ -171,7 +171,8 @@ encrypt Param{..} (PublicKey (x₀:xs)) (fromBit → m) = do
   subsetSum ← sum <$> randomSubset xs
 
   -- Random integer r in (-2^ρ′, 2^ρ′)
-  r ← randomRIO (-2^ρ' + 1, 2^ρ' - 1)
+  --r ← randomRIO (-2^ρ' + 1, 2^ρ' - 1)
+  let r = 9
 
   -- Output c ← [m + 2r + 2 Σi∈S x_i]x₀
   return (remainder x₀ (m + 2*r + 2*subsetSum))
@@ -189,8 +190,11 @@ evaluate' circuit cs = evalCircuit (integrate circuit cs)
 run = do
   let param = securityParameters 2
 
-  (secretKey, publicKey) ← keygen param
-  c ← encrypt param publicKey O
+  --(secretKey, publicKey') ← keygen param
+  let secretKey = SecretKey 3
+  --publicKey' <- publicKey param (SecretKey 3)
+  let publicKey' = PublicKey [4294165053,2937158614,2077185567,2120331133,1078018142,1694793124,3616212308,2495377078,4104956896,2993514147,712282882,2974621658,1977029803,1361544513,2759375862,453941949,701971598,1783399639,1372083757,1999241342,2274328068,198136272,1068019104,3813218967,4002726603,423936769,496396215,2821294531,319690018,3249068595,74616471,3273444161,2816782659,4107208407,2926639445]
+  c ← encrypt param publicKey' O
   return (decrypt secretKey c)
 
 --   cs ← mapM (encrypt param pk) [O,O,I,O,I]
