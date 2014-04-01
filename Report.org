@@ -38,6 +38,8 @@ Haskell-based EDSL
 
 + http://www.cs.uu.nl/wiki/pub/Afp/CourseLiterature/Gill-09-TypeSafeReification.pdf 
 
++ http://research.microsoft.com/pubs/146975/ihe.pdf Implementing fully homomorphic encryption
+
 Original Domain Analysis paper for the CSP project (2001) [confidential]
 
 Notes on performance of FPGA implementations of AES and DES (July, 2006)

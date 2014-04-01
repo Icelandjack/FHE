@@ -46,8 +46,8 @@ n `hasBitSize` bits = 2^(bits-1) <= n
 
 mkSecretKey ∷ Param → Integer → Either String SecretKey
 mkSecretKey Param{η} n = do
-  assert (odd n)            "n is even"
   assert (n `hasBitSize` η) "n has wrong bitsize"
+  assert (odd n)            "n is even"
   return (SecretKey n)
 
 mkPublicKey ∷ Param → SecretKey → [Integer] → Either String PublicKey
@@ -59,9 +59,10 @@ mkPublicKey Param{..} (SecretKey p) (x₀:xs) = do
   assert (all (x₀ >) xs) "x₀ is not the largest element!"
 
   -- Restart unless x₀ is odd or r_p(x₀) is even
-  assert (odd x₀ && even (remainder(p) x₀)) ("r_" ++ show p ++ "(" ++ show x₀ ++ ") must be even")
-  -- assert (even (remainder(p) x₀)) ("r_" ++ show p ++ "(" ++ show x₀ ++ ") must be even")
-  -- assert (odd x₀)                 (show x₀ ++ " must be odd")
+  assert (odd x₀)
+      (show x₀ ++ " must be odd")
+  assert (even (remainder(p) x₀))
+      ("r_" ++ show p ++ "(" ++ show x₀ ++ ") must be even")
   
   return (PublicKey (x₀:xs))
 
@@ -222,7 +223,7 @@ run = do
 
 -- -- -- [ihe] http://research.microsoft.com/pubs/146975/ihe.pdf
 
-par = securityParameters 2
+p' = securityParameters 2
 
 -- -- foobar c (Positive p) = let
 -- --   c' = c `mod` p
