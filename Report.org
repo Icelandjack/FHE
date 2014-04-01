@@ -40,6 +40,12 @@ Haskell-based EDSL
 
 + http://research.microsoft.com/pubs/146975/ihe.pdf Implementing fully homomorphic encryption
 
++ Homomorphic Encryption from Learning with Errors: Conceptually-Simpler, Asymptotically-Faster, Attribute-Based http://eprint.iacr.org/2013/340.pdf
+
++ Can Homomorphic Encryption be Practical? https://eprint.iacr.org/2011/405
+
++ Fully Homomorphic Encryption without Bootstrapping https://eprint.iacr.org/2011/277
+
 Original Domain Analysis paper for the CSP project (2001) [confidential]
 
 Notes on performance of FPGA implementations of AES and DES (July, 2006)
