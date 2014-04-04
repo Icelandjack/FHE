@@ -1,3 +1,4 @@
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE RankNTypes      #-}
 {-# LANGUAGE NamedFieldPuns  #-}
 {-# LANGUAGE ViewPatterns    #-}
@@ -9,6 +10,9 @@ import Control.Monad
 import Control.Applicative
 import Text.Printf
 import Data.List
+import Test.QuickCheck
+import Test.QuickCheck.Monadic hiding (assert)
+import qualified Test.QuickCheck.Monadic as QC (assert)
 
 import Auxiliary (remainder, quotient)
 
@@ -84,7 +88,7 @@ evalCircuit (Val i)  = i
 evalCircuit (a :+ b) = evalCircuit a + evalCircuit b
 evalCircuit (a :* b) = evalCircuit a * evalCircuit b
 
-data Bit = O | I deriving (Show)
+data Bit = O | I deriving (Eq, Show)
 
 fromBit ∷ Bit → Integer
 fromBit O = 0
@@ -105,8 +109,8 @@ data Param = Param {
 
 securityParameters ∷ Integer → Param
 securityParameters λ = Param {
-  ρ  = λ,
-  ρ' = 2*λ,
+  ρ  = λ `div` 2,
+  ρ' = λ, -- 2*λ,
   η  = λ^2,
   γ  = λ^5,
   τ  = λ^5+λ
@@ -171,8 +175,7 @@ encrypt Param{..} (PublicKey (x₀:xs)) (fromBit → m) = do
   subsetSum ← sum <$> randomSubset xs
 
   -- Random integer r in (-2^ρ′, 2^ρ′)
-  --r ← randomRIO (-2^ρ' + 1, 2^ρ' - 1)
-  let r = 9
+  r ← randomRIO (-2^ρ' + 1, 2^ρ' - 1)
 
   -- Output c ← [m + 2r + 2 Σi∈S x_i]x₀
   return (remainder x₀ (m + 2*r + 2*subsetSum))
@@ -181,21 +184,32 @@ encrypt Param{..} (PublicKey (x₀:xs)) (fromBit → m) = do
     randomSubset ∷ [a] → IO [a]
     randomSubset = filterM (const randomIO)
 
+a = [4173815723,981732290,2845820450,1637231727,46995058,3736712443,3217495941,3270022998,2620897949,2731488596,3907562780,2899889820,223243758,1871760120,3127117951,3406828967,1159468542,358429029,867507929,2246957504,1813307517,405967405,1979438668,3361970677,2679563656,4017115529,4148680250,1352261886,1990390487,2548000928,479190374,4173735250,2498951248,2208028351,3113002529]
+
+prop_foo b = monadicIO $ do
+  let msg   = if b then O else I
+      param = securityParameters 3
+  (sk, pk) ← run (keygen param)
+
+  c ← run (encrypt param pk msg)
+  run $ print $ decrypt sk c
+  QC.assert (decrypt sk c == msg)
+
 decrypt ∷ SecretKey → Integer → Bit
 decrypt (SecretKey sk) c = toBit (remainder(2) (remainder(sk) c))
 
 evaluate' ∷ Circuit → [Integer] → Integer
 evaluate' circuit cs = evalCircuit (integrate circuit cs)
 
-run = do
-  let param = securityParameters 2
+-- run = do
+--   let param = securityParameters 2
 
-  --(secretKey, publicKey') ← keygen param
-  let secretKey = SecretKey 3
-  --publicKey' <- publicKey param (SecretKey 3)
-  let publicKey' = PublicKey [4294165053,2937158614,2077185567,2120331133,1078018142,1694793124,3616212308,2495377078,4104956896,2993514147,712282882,2974621658,1977029803,1361544513,2759375862,453941949,701971598,1783399639,1372083757,1999241342,2274328068,198136272,1068019104,3813218967,4002726603,423936769,496396215,2821294531,319690018,3249068595,74616471,3273444161,2816782659,4107208407,2926639445]
-  c ← encrypt param publicKey' O
-  return (decrypt secretKey c)
+--   --(secretKey, publicKey') ← keygen param
+--   let secretKey = SecretKey 3
+--   --publicKey' <- publicKey param (SecretKey 3)
+--   let publicKey' = PublicKey [4294165053,2937158614,2077185567,2120331133,1078018142,1694793124,3616212308,2495377078,4104956896,2993514147,712282882,2974621658,1977029803,1361544513,2759375862,453941949,701971598,1783399639,1372083757,1999241342,2274328068,198136272,1068019104,3813218967,4002726603,423936769,496396215,2821294531,319690018,3249068595,74616471,3273444161,2816782659,4107208407,2926639445]
+--   c ← encrypt param publicKey' O
+--   return (decrypt secretKey c)
 
 --   cs ← mapM (encrypt param pk) [O,O,I,O,I]
 

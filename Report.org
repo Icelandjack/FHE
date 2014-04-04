@@ -1,11 +1,41 @@
 * Abstract
 
 * Introduction
+Fully homomorphic encryption (FHE) allows performing
+arbitrarily-complex computations on encrypted data without decrypting
+it. (Fully Homomorphic Encryption without Bootstrapping https://eprint.iacr.org/2011/277)
+
+
 
 * Preliminary implementation
 A preliminary implementation of the symmetric version of the somewhat
 homomorphic encryption scheme (SHE) described in Gentry's original
 thesis[1] in Haskell, and later the asymmetric version.
+
+Using “Using Circular Programs for Higher-Order Syntax” by Emil
+Axelsson and Koen Claessen
+http://www.cse.chalmers.se/~emax/documents/axelsson2013using.pdf
+allows constructing using higher-order syntax using circular
+programming to construct programs and making it first-order where
+building an expression is linear in its size:
+
+: ghci> let identity = lam (\x -> (lam id · lam id) · x)
+: ghci> identity 
+: Lam 2 (App (App (Lam 1 (Var 1)) (Lam 1 (Var 1))) (Var 2))
+
+whose interplay with Edward Kmett's =bound= package will be explored.
+
+Also looked at “Combining Deep and Shallow Embedding for EDSL”
+(http://www.cse.chalmers.se/~josefs/publications/TFP12.pdf) for ideas
+on how to gain some of the benfits of shallow embedding.
+
+Generic Monadic Constructs for Embedded Languages
+http://www.cse.chalmers.se/~josefs/publications/paper21_cameraready.pdf
+was considered but side-effects are only planned in the form of a
+random source which does not pose the same problems to a lazy and pure
+DSL since different runs of the random function are morally
+interchangable.(reference QuickCheck paper?)
+
 * DSL Design
 When designing the DSL a high-level design was ...
 
