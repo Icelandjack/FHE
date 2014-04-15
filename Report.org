@@ -5,8 +5,6 @@ Fully homomorphic encryption (FHE) allows performing
 arbitrarily-complex computations on encrypted data without decrypting
 it. (Fully Homomorphic Encryption without Bootstrapping https://eprint.iacr.org/2011/277)
 
-
-
 * Preliminary implementation
 A preliminary implementation of the symmetric version of the somewhat
 homomorphic encryption scheme (SHE) described in Gentry's original
@@ -55,6 +53,11 @@ Inspired by Cryptol with type-level naturals[2]
 :   };
 
 There was inspiration from other DSL's such as Lava 
+
+Pull arrays are good for immutable array representation used by
+similar projects like Pan, Feldspar, Repa and Obsidian. (http://www.cs.indiana.edu/pub/techreports/TR712.pdf)
+
+Compiling Embedded Languages by Conal et.al.
 
 * Related Work
 + “[[https://eprint.iacr.org/2011/561.pdf][A Domain-Specific Language for Computing on Encrypted Data]]”
