@@ -27,6 +27,14 @@ Also looked at “Combining Deep and Shallow Embedding for EDSL”
 (http://www.cse.chalmers.se/~josefs/publications/TFP12.pdf) for ideas
 on how to gain some of the benfits of shallow embedding.
 
+Lenart Augustsson uses a similar feature in his talk “Making EDSLs Fly”:
+
+: class Valeu a where
+:   lift :: a -> E a
+:   down :: E a -> a
+
+Neritic embedding (embedding between shallow and deep).
+
 Generic Monadic Constructs for Embedded Languages
 http://www.cse.chalmers.se/~josefs/publications/paper21_cameraready.pdf
 was considered but side-effects are only planned in the form of a
