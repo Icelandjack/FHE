@@ -1,4 +1,4 @@
-{-# LANGUAGE RebindableSyntax, GADTs, TypeFamilies, UnicodeSyntax, UndecidableInstances #-}
+{-# LANGUAGE RebindableSyntax, GADTs, TypeFamilies, UnicodeSyntax, UndecidableInstances, ScopedTypeVariables #-}
 
 module EDSL where
 
@@ -6,6 +6,7 @@ import qualified Prelude as P
 import Prelude hiding ((<), (>=), (<=), min, max)
 import Data.Bits
 import Data.Word
+import Data.Maybe
 
 infixr 2 :||
 infix  4 .==
@@ -22,7 +23,9 @@ eval (While c b i) =
 eval (ArrLen arr) = length (eval arr)
 eval (Arr l ixf) = let
   len = eval l
-  in map eval $ map ixf $ map Lit [0..len-1]
+  in map eval
+   $ map ixf
+   $ map Lit [0..len-1]
 eval (a :<  b) = eval a P.< eval b
 eval (a :<= b) = eval a P.<= eval b
 eval (a :>= b) = eval a P.>= eval b
@@ -34,6 +37,8 @@ eval (Pair a b) = (eval a, eval b)
 eval (Fst a) = fst (eval a)
 eval (Snd a) = snd (eval a)
 eval (Value a) = a
+eval (Lookup l ixf) = map ixf (take (eval l) [0..])
+eval _   = undefined
 
 min ∷ Exp Int → Exp Int → Exp Int
 min a b = ifC (a < b) a b
@@ -41,7 +46,17 @@ min a b = ifC (a < b) a b
 max ∷ Exp Int → Exp Int → Exp Int
 max a b = ifC (a < b) b a
 
+--   Let :: String -> Lam expr (ra -> (ra -> rb) -> rb) (a -> (a -> b) -> b)
+--   Inject :: expr role a -> Lam expr role a
+
 data Exp a where
+  -- | Lambda expressions
+  Var    ∷ String → Exp a
+  Value  ∷ a → Exp a
+  Lambda ∷ (Exp a → Exp b) → Exp a → Exp b
+  (:·)   ∷ Exp (a → b) → Exp a → Exp b
+  Let    ∷ String → Exp (a → (a → b) → b)
+
   Lit    ∷ Num a ⇒ a → Exp a
   LitB   ∷ Bool → Exp Bool
   If     ∷ Exp Bool → Exp a → Exp a → Exp a
@@ -49,26 +64,41 @@ data Exp a where
   Pair   ∷ Exp a → Exp b → Exp (a, b)
   Fst    ∷ Exp (a, b) → Exp a
   Snd    ∷ Exp (a, b) → Exp b
-  Arr    ∷ Exp Int → (Exp Int → Exp a) → Exp [a]
-  ArrLen ∷ Exp [a] → Exp Int
-  ArrIx  ∷ Exp [a] → Exp Int → Exp a
-  Value  ∷ a → Exp a
   Prim1  ∷ String → (a → b)     → Exp a → Exp b
   Prim2  ∷ String → (a → b → c) → Exp a → Exp b → Exp c
+
+  Conv   ∷ Exp Word8 → Exp Int
 
   (:<)   ∷ Ord a ⇒ Exp a → Exp a → Exp Bool
   (:<=)  ∷ Ord a ⇒ Exp a → Exp a → Exp Bool
   (:>=)  ∷ Ord a ⇒ Exp a → Exp a → Exp Bool
-  (:==)  ∷ Eq  a ⇒ Exp a → Exp a → Exp Bool
+  (:==)  ∷ (Show a, Eq a) ⇒ Exp a → Exp a → Exp Bool
   (:-)   ∷ Num a ⇒ Exp a → Exp a → Exp a
   (:+)   ∷ Num a ⇒ Exp a → Exp a → Exp a
   (:*)   ∷ Num a ⇒ Exp a → Exp a → Exp a
-  (:||)   ∷ Exp Bool → Exp Bool → Exp Bool
+  
+  (:||)  ∷ Exp Bool → Exp Bool → Exp Bool
+
+  -- Arrays
+  Arr    ∷ Exp Int → (Exp Int → Exp a) → Exp [a]
+  ArrLen ∷ Exp [a] → Exp Int
+  ArrIx  ∷ Exp [a] → Exp Int → Exp a
+
+  -- Lookup table?
+  Lookup ∷ Exp Int → (Word8 → Word8) → Exp [Word8]
+
+  Undef  ∷ Exp a
+
+  GetBit ∷ Exp Word8 → Exp Int → Exp Word8
+--   SetBit ∷ Exp Word8 → Exp Int → Exp 
 
 instance Show a ⇒ Show (Exp a) where
   show (Lit i) = show i
   show (LitB b) = show b
+  show (Var x)  = x
   show (If c t e) = "(if " ++ show c ++ " then " ++ show t ++ " else " ++ show e ++ ")"
+  show (a :== b) = "(" ++ show a ++ " == " ++ show b ++ ")"
+  show Undef = "UNDEF"
   show a = show (eval a)
 
 class Embed a where
@@ -134,7 +164,7 @@ Lit a .== Lit b = case a == b of
 a .== b = a :== b
 
 mod' ∷ Exp Int → Exp Int → Exp Int
-mod' a b = while (>= b) (subtract a) a 
+mod' a b = while (>= b) (subtract a) a
 
 instance Num a ⇒ Num (Exp a) where
   fromInteger = Lit . fromInteger
@@ -161,11 +191,15 @@ instance Embed Complex where
   sugar m      = Fst m :++ Snd m
   desugar (a :++ b) = Pair a b
 
+-- Vector
 len ∷ Exp [a] → Exp Int
-len = ArrLen 
+len arr = ArrLen arr
 
 (<!>) ∷ Embed a ⇒ Exp [Repr a] → Exp Int → a
 arr <!> ix = sugar (ArrIx arr ix)
+
+(!) ∷ Vector a → Exp Int → a
+Indexed l ixf ! i = ixf i
 
 type Vector1 a = Vector (Exp a)
 type Vector2 a = Vector (Vector (Exp a))
@@ -180,6 +214,11 @@ instance Embed a ⇒ Embed (Vector a) where
   type Repr (Vector a) = [Repr a]
   desugar (Indexed l ixf) = Arr l (desugar . ixf)
   sugar arr           = Indexed (len arr) (arr <!>)
+
+fromList ∷ [Word8] → Vector (Exp Word8)
+fromList xs = indexed (Lit (length xs)) indexFunction where
+
+  indexFunction (Lit i) = Lit (fromJust (lookup i (zip [0..] xs)))
 
 instance (Embed a, Repr a ~ b, Show b) ⇒ Show (Vector a) where
   show a = show (desugar a)
@@ -213,4 +252,12 @@ zipWithVec f (Indexed l1 ifx1) (Indexed l2 ifx2) =
 otp ∷ Vector Int → Vector Int → Vector Int
 otp = undefined
 
-sum' (Indexed l ixf) = forLoop l 0 (\i s -> s + ixf i)
+sumVec ∷ (Embed a, Num a) ⇒ Vector a → a
+sumVec (Indexed l ixf) = for l 0 (\i s -> s + ixf i)
+
+instance Functor Vector where
+  fmap f (Indexed l ixf) = Indexed l (f . ixf)
+
+scalarProd ∷ (Embed a, Num a) ⇒ Vector a → Vector a → a
+scalarProd a b = sumVec (zipWithVec (*) a b)
+
