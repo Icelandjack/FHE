@@ -1,3 +1,5 @@
+{-# LANGUAGE PostfixOperators #-}
+
 -- Galois Field (2⁸) addition and multiplication
 
 module GF ((⊕), (•)) where
@@ -83,12 +85,12 @@ gmul x y = runST $ do
   b ← newSTRef y
 
   times 8 $ do
-    b' ← readSTRef b
+    b' ← (b•)
     when (odd b') $ do
-      a' ← readSTRef a
+      a' ← (a•)
       p ^= a'
 
-    a' ← readSTRef a
+    a' ← (a•)
 
     a <<<= 1
 
@@ -97,13 +99,14 @@ gmul x y = runST $ do
 
     b >>>= 1
   
-  readSTRef p
+  (p•)
 
   where
     -- Let's pretend to be C
     ref >>>= n = modifySTRef' ref (`shiftR` n)
     ref <<<= n = modifySTRef' ref (`shiftL` n)
     ref   ^= n = modifySTRef' ref (xor      n)
+    (•)        = readSTRef
 
     times = replicateM_
 

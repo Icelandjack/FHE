@@ -88,8 +88,6 @@ shiftRows (Matrix rows) = fromLists' (zipWith shiftLeft [0..] rows)
 --   in one clock cycle only so the whole of the new state matrix can be 
 --   achieved in 5 cycles. 
 -- http://www.design-reuse.com/articles/13981/fpga-implementation-of-aes-encryption-and-decryption.html
-
-
     
 -- http://books.google.se/books?id=qIY9RTzemr8C&lpg=PA259&ots=FWpFOvP-xH&dq=multiplication%20GF%20FPGA%20aes&hl=is&pg=PA260#v=onepage&q=multiplication%20GF%20FPGA%20aes&f=false    
 --     
@@ -121,7 +119,7 @@ prop_shift xs = shiftLeft (length xs) xs == xs
 prop_shift2 ∷ [Int] → Bool
 prop_shift2 = undefined
 
--- | Shifting by powers of 24 is idempotent
+-- | Shifting by multiples of 24 is the identity
 prop_shiftRows ∷ Eq a ⇒ Matrix a → Int → Bool
 prop_shiftRows matrix (abs → n) =
   iterate shiftRows matrix !! (2*3*4*n)

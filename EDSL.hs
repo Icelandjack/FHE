@@ -104,9 +104,6 @@ data Exp a where
 
   Undef  :: Exp a
 
-  GetBit ∷ Exp Word8 → Exp Int → Exp Word8
---   SetBit ∷ Exp Word8 → Exp Int → Exp 
-
 instance Show (Exp a) where
   show = \case
     Arr l ixf    → "INDEXED " ++ show l ++ " something"
