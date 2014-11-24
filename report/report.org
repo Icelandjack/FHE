@@ -1,0 +1,75 @@
+* Master's Thesis
+
+** Introduction
+Implementing encryption algorithms is a difficult task.
+(cite everything from this intro: [[http://repositorium.sdum.uminho.pt/xmlui/bitstream/handle/1822/14376/main.pdf?sequence=1][here]])
+
+Implemented in low-level languages gives performance but often at the
+cost of readability, safety and making it more difficult to reason
+about the implementation and whether it follows the specification.
+
+Implementing encryption algorithms in a higher-level language may lead
+to unacceptable performance.
+
+This thesis explores a domain-specific language (DSL) that aims to
+mediate those two approaches by allowing users to implement the
+algorithm in a high-level way while retaining reasonable performance,
+using domain-specific knowledge to perform optimizations that could
+not be performed otherwise.
+
+The domain-specific language will be an domain-specific language,
+embedded (EDSL) in the purely functional programming language Haskell.
+
+The use case for this EDSL that will be used to gauge the outcome will
+be AES and algorithms for homomorphic encryption, both described later.
+
+*** Haskell
+*** Encryption algorithms
+**** AES
+**** Homomorphic Encryption
+
+Fully homomorphic encryption (FHE) allows performing
+arbitrarily-complex computations on encrypted data without decrypting
+it. (Fully Homomorphic Encryption without Bootstrapping
+https://eprint.iacr.org/2011/277)
+
+** Design
+
+** Implementation
+
+*** Preliminary implementation
+A preliminary implementation of the symmetric version of the somewhat
+homomorphic encryption scheme (SHE) described in Gentry's original
+thesis[1] in Haskell, and later the asymmetric version.
+
+Using “Using Circular Programs for Higher-Order Syntax” by Emil
+Axelsson and Koen Claessen
+http://www.cse.chalmers.se/~emax/documents/axelsson2013using.pdf
+allows constructing using higher-order syntax using circular
+programming to construct programs and making it first-order where
+building an expression is linear in its size:
+
+: ghci> let identity = lam (\x -> (lam id · lam id) · x)
+: ghci> identity 
+: Lam 2 (App (App (Lam 1 (Var 1)) (Lam 1 (Var 1))) (Var 2))
+
+whose interplay with Edward Kmett's =bound= package will be explored.
+
+Also looked at “Combining Deep and Shallow Embedding for EDSL”
+(http://www.cse.chalmers.se/~josefs/publications/TFP12.pdf) for ideas
+on how to gain some of the benfits of shallow embedding.
+
+Lenart Augustsson uses a similar feature in his talk “Making EDSLs Fly”:
+
+: class Valeu a where
+:   lift :: a -> E a
+:   down :: E a -> a
+
+Neritic embedding (embedding between shallow and deep).
+
+Generic Monadic Constructs for Embedded Languages
+http://www.cse.chalmers.se/~josefs/publications/paper21_cameraready.pdf
+was considered but side-effects are only planned in the form of a
+random source which does not pose the same problems to a lazy and pure
+DSL since different runs of the random function are morally
+interchangable.(reference QuickCheck paper?)
