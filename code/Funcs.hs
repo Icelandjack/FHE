@@ -1,5 +1,11 @@
-{-# LANGUAGE DatatypeContexts #-}
 {-# LANGUAGE RebindableSyntax #-}
+{-# LANGUAGE PatternSynonyms #-}
+{-# LANGUAGE UnicodeSyntax #-}
+{-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE ViewPatterns #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE RecordWildCards #-}
+
 import System.Process
 import System.IO
 import System.Exit

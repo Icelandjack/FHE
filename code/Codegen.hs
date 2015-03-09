@@ -1,3 +1,5 @@
+{-# LANGUAGE UnicodeSyntax #-}
+
 module Codegen where
 
 import qualified Data.Map as M
