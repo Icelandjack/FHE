@@ -1,11 +1,21 @@
 * Introduction
-“Security is only as strong as the weakest link, and the mathematics of cryptography is almost never the weakest link.”[fn:mathematics]
+“Security is only as strong as the weakest link, and the mathematics
+of cryptography is almost never the weakest link.”[fn:mathematics]
 
 This thesis is concerned with the implementation of cryptographic
-algorithms and protocols. General software engineering is full of
-difficulties but the implementation of cryptographic software provides
-a unique(?) combination of challenges:[fn:verifying]
+algorithms and protocols. It is hard to overstate the
+impact/importance cryptography on modern computing where applications
+run the gamut of <insert applications>. Given these critical
+applications the correctness and security of the cryptographic code we
+use is of vital importance.
 
+General software engineering is full of difficulties(rephrase) but the
+implementation of cryptographic software poses a unique(?) set of
+constraints (kröfur/requirement) and challenges needing both speed and
+correctness. Being traditionally written in low-level languages such
+as C, correctness can be difficult to verify:[fn:verifying]
+
+(rewrite all points)
 1. Cryptography requires knowledge of mathematics (such as number
    theory and probability theory) and the design and implementation of
    such software touches on computer science and electrical
@@ -26,6 +36,16 @@ there are also memory disclosure attacks[fn:memorydisclosureattack]
 where cryptographic keys or passwords may be exposed through
 disclosure of a portion(re-write) of both /allocated/ or /unallocated/
 memory. 
+
+---- BEGIN: REARRANGE ----
+
+The scope of this thesis is to create a domain-specific language for
+describing cryptographic computations in a high-level, concise way
+without sacrificing performance, where the language itself will be
+embedded in the purely functional programming language Haskell.
+
+---- END:   REARRANGE ----
+
 
 It is good practice to clear sensitive data after use and ensure it
 never gets written to disk[fn:Protecting] either via memory dumps or
@@ -98,3 +118,6 @@ https://eprint.iacr.org/2011/277)
 [fn:mathematics] Cryptography Engineering, Bruce Schneier
 [fn:memorydisclosureattack] [[http://www.cs.utsa.edu/~shxu/dsn07-preliminary-full.pdf][Protecting Cryptographic Keys from Memory Disclosure Attacks]]
 [fn:protecting] [[http://www.cgisecurity.com/lib/protecting-sensitive-data.html][Protecting sensitive data in memory]]
+
+* Jokes
+"its use is as incontrovertible as a thesaurus when writing a thesis"
