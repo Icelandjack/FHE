@@ -22,34 +22,26 @@ import qualified Data.Map as M
 import Control.Monad.State
 
 import Codegen
+import Expr
 
-data Exp 
-  = I Integer
-  | Add Exp Exp 
-  | Mul Exp Exp
-  | IfThenElse Exp Exp Exp 
-  | Var Char
-  | Fn String Exp [Exp]
-  | Lam Char Exp
-  deriving Show
+-- comp ∶             (Exp) → Codegen String
+-- comp ∶       (Exp → Exp) → Codegen String
+-- comp ∶ (Exp → Exp → Exp) → Codegen String
+class Comp a where
+  comp ∷ a → Codegen ([String], String)
 
-pattern Fn₁ str x     = Fn str x []
-pattern Fn₂ str x y   = Fn str x [y]
-pattern Fn₃ str x y z = Fn str x [y, z]
+instance Comp Exp where
+  comp ∷ Exp → Codegen ([String], String)
+  comp e = fmap ([], ) (compile e)
 
-putInt ∷ Exp → Exp
-putInt = Fn₁ "putint" 
+instance Comp p ⇒ Comp (Exp → p) where
+  comp ∷ (Exp → p) → Codegen ([String], String)
+  comp f = do
+    arg          ← [ "var" ++ show x | x ← fresh ]
+    (args, code) ← comp (f (Var arg))
 
-plusOne ∷ Exp → Exp
-plusOne = Fn₁ "plusone"
+    return (arg : args, code)
 
-add ∷ Exp → Exp → Exp
-add = Fn₂ "add"
-
-ifThenElse ∷ Exp → Exp → Exp → Exp
-ifThenElse = IfThenElse
-
-instance Num Exp where { fromInteger = I . fromInteger; (+) = Add; (*) = Mul }
 
 compile ∷ Exp → Codegen String
 compile (I n) = do
@@ -91,27 +83,36 @@ compile (IfThenElse cond tru fls) = do
   setBlock ifcont
   instr ("phi i64 [" ++ aaaa ++ ", %" ++ ifthen ++ "], "
               ++ "[" ++ bbbb ++ ", %" ++ ifelse ++ "]")
+
+compile (Var str)    = do
+  return ("%" ++ str)
+
 compile (Fn₁ name a) = do
   param ← compile a
   instr ("call i64 @" ++ name ++ "(i64 " ++ param ++ ")")
 
-compileExp ∷ Exp → (String, CodegenState)
+compileExp ∷ Comp a ⇒ a → (([String], String), CodegenState)
 compileExp exp = runCodegen $ do
   addBlock "entry" 
-  reg ← compile exp
-  instr ("tail call i32 (i8*, ...)* @printf(i8* getelementptr inbounds ([4 x i8]* @.str, i64 0, i64 0), i64 " ++ reg ++ ") nounwind")
-  terminate "ret i32 0"
+  (args, reg) ← comp exp
+  reg ← terminate ("ret i64 " ++ reg)
+  return (args, reg)
+
+  -- instr ("tail call i32 (i8*, ...)* @printf(i8* getelementptr inbounds ([4 x i8]* @.str, i64 0, i64 0), i64 " ++ reg ++ ") nounwind")
 
 pattern Stdout a ← (ExitSuccess, a, _)
 pattern Stderr b ← (ExitFailure _, _, b)
 pattern Int    n ← (readMaybe → Just (n ∷ Int))
 
-run ∷ Exp → IO String
-run exp = do
-  let (reg, code) = compileExp exp
+run ∷ Comp a ⇒ a → [Int] → IO String
+run exp xs = do
+  let ((args, reg), code) = compileExp exp
 
       code₁ = M.toList (blocks code)
       code₂ = sortBy (comparing (index . snd)) code₁
+
+  let args' = intercalate ", " [ "i64 %" ++ arg    | arg ← args ]
+      xs'   = intercalate ", " [ "i64 "  ++ show x | x   ← xs   ]
 
   withFile "/tmp/foo.ll" WriteMode (\h → do
     hPutStrLn(h) "@.str = private unnamed_addr constant [4 x i8] c\"%d\\0A\\00\", align 1"
@@ -121,17 +122,26 @@ run exp = do
     hPutStrLn(h) ""
     hPutStrLn(h) "declare i64 @plusone(i64 %x)"
     hPutStrLn(h) ""
-    hPutStrLn(h) "define i32 @main() {"
+    hPutStrLn(h) ("define i64 @foobar(" ++ args' ++ ") {")
+
     forM_ code₂ $ \(label, MkBB{..}) → do
       hPutStrLn(h) (label ++ ":")
       forM_ instructions $ \instruction → do
         hPutStrLn(h) ("  " ++ instruction)
       hPutStrLn(h) ("  " ++ terminator)
-      
+
+    -- hPutStrLn(h) "  ret i64 %x"
+    hPutStrLn(h) "}"
+    hPutStrLn(h) ""
+    
+    hPutStrLn(h) "define i32 @main() {"
+    hPutStrLn(h) ("  %1 = call i64 @foobar(" ++ xs' ++ ")")
+    hPutStrLn(h) "  tail call i32 (i8*, ...)* @printf(i8* getelementptr inbounds ([4 x i8]* @.str, i64 0, i64 0), i64 %1) nounwind"
+    hPutStrLn(h) "  ret i32 0"
     hPutStrLn(h) "}")
 
   readProcess "lli" [
-      "-load=/home/baldur/repo/code/libfuncs.so", 
+      -- "-load=/home/baldur/repo/code/libfuncs.so", 
       "/tmp/foo.ll"
     ] ""
 
@@ -146,9 +156,6 @@ define i32 @main() {
 }
 -}
 
-blah ∷ Exp
-blah = Lam 'x' (4 + Var 'x' * 10)
-
 eval ∷ Exp → Integer
 eval = \case
   I a              → a
@@ -157,10 +164,4 @@ eval = \case
   IfThenElse c a b 
     | eval c /= 0  → eval a 
     | otherwise    → eval b
-
-foo ∷ Exp
-foo = 
-  if 1 
-  then 42
-  else 24242424
 

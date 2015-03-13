@@ -2,6 +2,7 @@
 
 module Codegen where
 
+import Prelude
 import qualified Data.Map as M
 import Control.Monad.State
 import Data.Functor
