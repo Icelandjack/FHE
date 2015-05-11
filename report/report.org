@@ -1,5 +1,6 @@
 * Master's thesis
 
-#+INCLUDE: "~/repo/report/intro.org"		:minlevel 1
-#+INCLUDE: "~/repo/report/background.org"	:minlevel 1
-#+INCLUDE: "~/repo/report/haskell.org"		:minlevel 1
+#+INCLUDE: "~/repo/report/01_intro.org"		:minlevel 1
+#+INCLUDE: "~/repo/report/02_background.org"	:minlevel 1
+#+INCLUDE: "~/repo/report/03_haskell.org"	:minlevel 1
+#+INCLUDE: "~/repo/report/04_impl.org"          :minlevel 1

@@ -1,6 +1,27 @@
 Project Description - Implementing Fully-Homomorphic Encryption 
 
+* Relevant Courses
+Programming Language Technology - Obvious reasons
+Functional Programming 
+Advanced Functional Programming
+Compiler Construction
+Types for Programs & Proofs - Dependent types prepared me for indexing types with the semantic type of expressions
+Category Theory
+
 * Introduction
+This thesis is concerned with the implementation of cryptographic
+algorithms and protocols with correctness in mind without sacrificing
+efficiency.
+
+
+
+
+, . It is hard to overstate the
+impact/importance cryptography on modern computing where applications
+run the gamut of <insert applications>. Given these critical
+applications the correctness and security of the cryptographic code we
+use is of vital importance.
+
 Implementing cryptographic algorithms in an efficient way without
 sacrificing correctness is challenging, as is verifying that the
 implementation follows the specification. This project introduces a
@@ -49,3 +70,4 @@ Show how it’s possible to use combinators to turn a naive version of an algori
 Testing functional correctness of a encryption scheme (AES).
 
 The project is research oriented and is intended to result in a publication.
+
