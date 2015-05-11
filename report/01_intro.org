@@ -1,0 +1,123 @@
+* Introduction
+“Security is only as strong as the weakest link, and the mathematics
+of cryptography is almost never the weakest link.”[fn:mathematics]
+
+This thesis is concerned with the implementation of cryptographic
+algorithms and protocols. It is hard to overstate the
+impact/importance cryptography on modern computing where applications
+run the gamut of <insert applications>. Given these critical
+applications the correctness and security of the cryptographic code we
+use is of vital importance.
+
+General software engineering is full of difficulties(rephrase) but the
+implementation of cryptographic software poses a unique(?) set of
+constraints (kröfur/requirement) and challenges needing both speed and
+correctness. Being traditionally written in low-level languages such
+as C, correctness can be difficult to verify:[fn:verifying]
+
+(rewrite all points)
+1. Cryptography requires knowledge of mathematics (such as number
+   theory and probability theory) and the design and implementation of
+   such software touches on computer science and electrical
+   engineering.
+2. Hard to sell security as a feature despite risks, when cryptography
+   is required the implementation may need to be as computationally
+   transparent as possible without altering the semantics of the
+   underlying algorithm or protocol.
+3. Cryptographic software runs everywhere from embedded processors
+   (low-performance, limited memory and autonomy) to high-end servers
+   (high-performance, low-latency). May need to make use of
+   processor-specific instructions and capabilities.
+
+Accounting for (2) the implementation of cryptographic software is
+often limited to low-level languages with control over resource usage,
+
+there are also memory disclosure attacks[fn:memorydisclosureattack]
+where cryptographic keys or passwords may be exposed through
+disclosure of a portion(re-write) of both /allocated/ or /unallocated/
+memory. 
+
+---- BEGIN: REARRANGE ----
+
+The scope of this thesis is to create a domain-specific language for
+describing cryptographic computations in a high-level, concise way
+without sacrificing performance, where the language itself will be
+embedded in the purely functional programming language Haskell.
+
+---- END:   REARRANGE ----
+
+
+It is good practice to clear sensitive data after use and ensure it
+never gets written to disk[fn:Protecting] either via memory dumps or
+swapping (using =mlock= to lock the page), using =mlock= however will
+no protect against suspending the computer which saves the computer's
+RAM to disk.[fn::man mlock(2)]
+
+Many cryptographic algorithms are also susceptible to side channel
+attacks like timing attacks and power monitoring attacks, many of whom
+are hard to protect against in high level languages with garbage
+collection.
+
+The complexity of modern general-purpose processors (instruction
+pipelines, branching, memory access) and operating systems (preemptive
+context switches) and optimizers limit the assurances library
+designers can give about their code.
+
+There is a limit to 
+
+Garbage collection also makes it 
+
+
+
+Thus garbage collection
+
+Important features for a language for cryptography:
++ Unsigned byte
++ Bit-manipulations
++ Possibility of harnessing processor specific instructions
++ Possibility of parallelisation
+
+
+Implemented in low-level languages gives performance but often at the
+cost of readability, safety and making it more difficult to reason
+about the implementation and whether it follows the specification.
+
+Implementing encryption algorithms in a higher-level language may lead
+to unacceptable performance.
+
+This thesis explores a domain-specific language (DSL) that aims to
+mediate those two approaches by allowing users to implement the
+algorithm in a high-level way while retaining reasonable performance,
+using domain-specific knowledge to perform optimizations that could
+not be performed otherwise.
+
+The domain-specific language will be an domain-specific language,
+embedded (EDSL) in the purely functional programming language Haskell.
+
+The use case for this EDSL that will be used to gauge the outcome will
+be AES and algorithms for homomorphic encryption, both described later.
+
+** Haskell
+[Give reference to full description of GADTs]
+
+[S. Peyton Jones, D. Vytiniotis, S. Weirich, and G. Washburn. Simple unification-based type inference for GADTs. In ICFP , pages 50–61, 2006]
+
+
+** Encryption algorithms
+*** AES
+*** Homomorphic Encryption
+
+Fully homomorphic encryption (FHE) allows performing
+arbitrarily-complex computations on encrypted data without decrypting
+it. (Fully Homomorphic Encryption without Bootstrapping
+https://eprint.iacr.org/2011/277)
+
+
+
+[fn:verifying] [[http://repositorium.sdum.uminho.pt/xmlui/bitstream/handle/1822/14376/main.pdf?sequence=1][Verifying Cryptographic Software Correctness with Respect to Reference Implementations]]
+[fn:mathematics] Cryptography Engineering, Bruce Schneier
+[fn:memorydisclosureattack] [[http://www.cs.utsa.edu/~shxu/dsn07-preliminary-full.pdf][Protecting Cryptographic Keys from Memory Disclosure Attacks]]
+[fn:protecting] [[http://www.cgisecurity.com/lib/protecting-sensitive-data.html][Protecting sensitive data in memory]]
+
+* Jokes
+"its use is as incontrovertible as a thesaurus when writing a thesis"

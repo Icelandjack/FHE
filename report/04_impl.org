@@ -1,0 +1,202 @@
+* Implementation
+
+** Hutton's Razor
+Preliminary implementations focused on a simple arithmetic expression
+language rather than the language in its entirety:
+
+: data Exp = Val Word64 | Add Exp Exp
+
+This simple language with integer constants and addition --- often
+dubbed “Hutton's razor” --- is a common vehicle (*rephrase*) for
+exploring compilation.[41] It is “unityped” since there is only a
+single type involved (=Word64=).
+
+An example of an expression of our simple language is an expression
+adding numbers from 1 to 4 $(1 + 2) + (3 + 4)$:
+
+: exp :: Exp
+: exp = Add (Add (Val 1) (Val 2))
+:           (Add (Val 3) (Val 4))
+
+which is clunky to write and will only get more unwieldy. Making =Exp= an instance of =Num= will make
+it more convenient to work with:
+
+: instance Num Exp where
+:   (+) :: Exp -> Exp -> Exp
+:   (+) = Add
+:
+:   fromInteger :: Integer -> Exp
+:   fromInteger n = Val (fromInteger n)
+
+=exp= can then be rewritten as
+
+: exp :: Exp
+: exp = (1 + 2) + (3 + 4)
+
+Note the other methods of the =Num= type class do not have a sensible
+implemention for our expression language and are therefore
+omitted. Calling those methods will result in a run-time error.
+
+This simple expression language is deeply embedded and can be
+interpreted or observed in a variety of ways. One possible observer
+evaluates the expression by recursively replacing each =Val= with the
+identity function and each =Add= by addition:
+
+: eval :: Exp -> Word64
+: eval (Val n)   = n
+: eval (Add a b) = eval a + eval b
+
+which can be used to evaluate the =exp= 
+
+: > eval exp
+: 10
+
+This evaluation function will be extended with the EDSL and will play
+a role in testing the compilation process as a testing oracle.
+
+Another observation is to print the expressions as strings:
+
+: toString :: Exp -> String
+: toString (Val n)   = printf "%d" n
+: toString (Add a b) = printf "(%s + %s)" (toString a) (toString b)
+
+: > toString exp
+: "((1 + 2) + (3 + 4))"
+
+A more fundamental observer compiles the expression language into a
+simplified version of LLVM assembly: since our language includes no
+control flow the entire language can be compiled into an LLVM basic
+block without additional labels or jumps:
+
+: compile :: Exp -> String
+
+: > putStrLn (compile exp)
+: entry:
+:   %add1 = add i64 1, 2
+:   %add2 = add i64 3, 4
+:   %add3 = add i64 %add1, %add2
+:   ret i64 %add3
+
+Plugging that basic block into a complete function definition gives
+
+: define i64 @foobar() {
+: entry:
+:   %add1 = add i64 1, 2
+:   %add2 = add i64 3, 4
+:   %add3 = add i64 %add1, %add2
+:   ret i64 %add3
+: }
+
+which can then be interpreted or turned into an executable
+
+: compileRun :: Exp -> IO Word64
+
+: > compileRun exp
+: 10
+
+*** Testing
+
++ QuickCheck
+  QuickCheck was used to test properties of the compiler.
+
+QuickCheck generates test cases and tests whether properties hold. In
+order to make test cases we need to indicate how to generate random
+terms of =Exp= by defining an =Arbitrary= instance for =Exp= and a
+generator =arbitrary :: Gen Exp= that generates expression.
+
+Defining =arbitrary= in the ‘obvious’ way means the generator is
+defined recursively has an issue:
+
+: instance Arbitrary Exp where
+:   arbitrary :: Gen Exp
+:   arbitrary = oneof
+:     [ Val <$> arbitrary,
+:       Add <$> arbitrary <*> arbitrary ]
+
+The expressions it generates may become too large or even fail to
+terminate. Each QuickCheck generator carries with it a size parameter
+that slowly increases during testing, to avoid the previous situation
+we can use the combinator =sized= to modify the value of our size
+parameter:
+
+: sized :: (Int -> Gen a) -> Gen a
+
+Using this we can cut the size parameter in two in the recursive cases:
+
+: instance Arbitrary Exp where
+:   arbitrary :: Gen Exp 
+:   arbitrary = sized sizedExpr where
+: 
+:     sizedExpr :: Int → Gen Exp
+:     sizedExpr 0 = I <$> arbitrary
+:     sizedExpr n = let 
+:       subtree = sizedExpr (n `div` 2)
+: 
+:       in oneof [ I   <$> arbitrary,
+:                  Add <$> subtree <*> subtree ]
+
+A desirable property of the compiler is that its output agree with the
+evaluation function, using it as a /test oracle/ which for our
+purposes is a source of expected results we can compare against. Then
+it is simple to compile our expressions and compare the resulting
+value to the evaluation function to see if there is a mismatch.
+
+Because the =compileRun= function returns an =IO Word64= action we use
+monadic QuickCheck (=Test.QuickCheck.Monadic=) to test the output:
+
+: prop_eval :: Exp -> Property
+: prop_eval exp = monadicIO $ do
+:   compiled <- run (compileRun exp)
+: 
+:   assert (eval exp == compiled)
+
+and run it using:
+
+: > quickCheck prop_eval
+: +++ OK, passed 100 tests.
+
+This generates 100 random expression trees, compiles them and compares
+them to our oracle and the outputs match making sure the compilation
+is at the very least consistent with the =eval= observer whose
+implementation is much simpler to verify.
+
+This works as a simple sanity check.
+
+** =if-then-else=
+: TALK ABOUT KEEPING TRACK OF ENVIRONMENT OF THE BASIC BLOCKS
+   
+We augment our language with an /if/-expression
+
+: data Exp = ... | If Exp Exp Exp 
+
+where the arguments of =If= indicate the conditional, then and else
+branches respectively. For simplicity 0 indicates falsehood.
+
+*** Testing
+When testing an expression with an /if/ expression we ideally want to
+test the branches with similar frequency.
+
+This means the conditional tests should be biased towards expressions
+that evaluate to 0.
+
+Simple solution:
+
+: zeroBias :: Gen Exp 
+: zeroBias = suchThat arbitaray (\exp -> eval exp == 0)
+
+more efficient solution that generates a smaller space:
+
+: zeroBias' :: Gen Exp 
+: zeroBias' = do
+:   exp <- arbitrary
+:   return (exp + Val (- eval exp))
+
+Again we need to be cognisant of the generator's size parameter, since
+=If= takes three arguments and the size of each generator should be
+split in three.
+
+: ...
+
+[41] Hutton, G.:  Fold and unfold for program semantics.  In: Proceedings of the Third
+ACM SIGPLAN International Conference on Functional Programming, Baltimore,
+Maryland (1998) 280-288

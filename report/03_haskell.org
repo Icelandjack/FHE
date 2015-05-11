@@ -1,0 +1,5 @@
+* Tutorial & Haskell Implementation
+Haskell is a purely functional programming language.
+
+Skrifa um Haskell og fully homomorphic encryption á morgun
+
