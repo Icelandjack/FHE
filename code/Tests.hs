@@ -6,103 +6,151 @@ import Test.QuickCheck.Function
 import qualified Test.QuickCheck.Monadic as M
 
 import Funcs
-import Expr
+import Exp
+import Types
 
-compileRun :: Exp -> IO Integer
-compileRun exp = do
-  a ← test exp
-  return $ read $ last (lines a)
+data AnyExp where
+  Any ∷ Exp a → AnyExp
 
-instance Arbitrary Exp where
-  arbitrary ∷ Gen Exp 
-  arbitrary = sized sizedExpr where
+data Hidden where
+  (:::) ∷ (Read a, Eq a) ⇒ Exp a → TypeRep a → Hidden
 
-    sizedExpr ∷ Int → Gen Exp
-    sizedExpr 0 = I <$> arbitrary
-    sizedExpr n = let 
-      subtree₂ = sizedExpr (n `div` 2)
-      subtree₃ = sizedExpr (n `div` 3)
+data AnyRep where
+  AnyRep ∷ TypeRep a → AnyRep
 
-      zeroBiased ∷ Gen Exp
-      zeroBiased = oneof [zeroExpr subtree₃, subtree₃]
+deriving instance Show Hidden
+deriving instance Show AnyRep
 
-      in oneof [ liftA  I   arbitrary
-               , liftA2 Add subtree₂ subtree₂
-               -- , liftA2 Mul subtree₂ subtree₂
-               -- , liftA2 (⊔) subtree₂ subtree₂
-               , liftA3 If  zeroBiased subtree₃ subtree₃
-               ]
+(//) = div
 
-  shrink ∷ Exp → [Exp]
-  shrink = genericShrink
+scale ∷ (Int → Int) → Gen a → Gen a
+scale f g = sized (\n -> resize (f n) g)
 
-arbitraryMin ∷ Gen Exp
-arbitraryMin = liftA2 (⊔) arbitrary arbitrary
+sub₂ ∷ Arbitrary a ⇒ Gen a
+sub₂ = scale (// 2) arbitrary
 
-arbExp ∷ Gen Exp
-arbExp = arbitrary
+sub₃ ∷ Arbitrary a ⇒ Gen a
+sub₃ = scale (// 3) arbitrary
 
-zeroExpr ∷ Gen Exp → Gen Exp
-zeroExpr arb = do
-  a ← arb
-  return (a + I (- eval a))
+instance Arbitrary AnyRep where
+  arbitrary ∷ Gen AnyRep
+  arbitrary = sized sizedRep where
 
-z ∷ Gen Exp
-z = suchThat arbitrary (\exp → eval exp == 0)
+    base ∷ Gen AnyRep
+    base = elements [ AnyRep TInt, AnyRep TBool ]
 
-instance CoArbitrary Exp where
-  coarbitrary ∷ Exp → Gen b → Gen b
-  coarbitrary (I n)      = variant 0
-  coarbitrary (Add x y)  = variant 1 . coarbitrary (x, y)
-  coarbitrary (If c t e) = variant 2 . coarbitrary (c, t, e)
-  coarbitrary (Var str)  = variant 3 . coarbitrary str
+    sizedRep ∷ Int → Gen AnyRep 
+    sizedRep 0 = base
+    sizedRep n = 
+      oneof [ 
+        base,
+        do AnyRep a ← return (AnyRep TInt) -- sizedRep (n//2)
+           AnyRep b ← return (AnyRep TInt) -- sizedRep (n//2)
+           return (AnyRep (TPair a b))
+      ]
 
-prop_eval ∷ Exp → Property
+arbitraryWithRep ∷ Int → AnyRep → Gen Hidden
+arbitraryWithRep n = \case
+  AnyRep TInt → do
+    a ← resize n arbitrary
+    return (a ::: TInt)
+  AnyRep TBool → do
+    a ← resize n arbitrary
+    return (a ::: TBool)
+  AnyRep (TPair TInt TInt) → do
+    a ← resize n arbitrary
+    return (a ::: TPair TInt TInt)
+    -- tm1 ::: TInt ← arbitraryWithRep (n//2) (AnyRep TInt)
+    -- tm2 ::: TInt ← arbitraryWithRep (n//2) (AnyRep TInt)
+    -- return (Pair tm1 tm2 ::: TPair TInt TInt)
+
+instance Arbitrary Hidden where
+  arbitrary ∷ Gen Hidden
+  arbitrary = do
+    typeRep ← arbitrary
+    sized (flip arbitraryWithRep typeRep)
+
+-- Arbitrary instances
+instance Arbitrary (Exp (Int, Int)) where
+  arbitrary ∷ Gen (Exp (Int, Int))
+  arbitrary = liftA2 Pair (scale (// 2) arbitrary)
+                          (scale (// 2) arbitrary)
+
+instance Arbitrary (Exp Int) where
+  arbitrary ∷ Gen (Exp Int)
+  arbitrary = sized sizedExp where
+
+    sizedExp ∷ Int → Gen (Exp Int)
+    sizedExp 0 = liftA LitI arbitrary
+    sizedExp n = do
+      
+      let subtree₂ = sizedExp (n // 2)
+          subtree₃ = sizedExp (n // 3)
+
+      oneof [ liftA  LitI arbitrary
+            , liftA  Fst  (resize n arbitrary)
+            , liftA  Snd  (resize n arbitrary)
+            , liftA2 Add  subtree₂ subtree₂ 
+            , liftA2 Mul  subtree₂ subtree₂ 
+            , liftA2 Xor  subtree₂ subtree₂ 
+            , liftA2 (⊔)  subtree₂ subtree₂ 
+            , liftA3 If   (resize (n//3) arbitrary) subtree₃ subtree₃
+            ]
+
+instance Arbitrary (Exp Bool) where
+  arbitrary ∷ Gen (Exp Bool)
+  arbitrary = sized sizedExp where
+    
+    sizedExp ∷ Int → Gen (Exp Bool)
+    sizedExp 0 = liftA LitB arbitrary
+    sizedExp n = do
+
+      let subtree₂ = sizedExp (n // 10)
+          subtree₃ = sizedExp (n // 20)
+      
+      oneof [ liftA  LitB arbitrary
+            , liftA  Not  arbitrary
+            , liftA2 And  subtree₂ subtree₂
+            , liftA3 If   subtree₃ subtree₃ subtree₃
+            ]
+
+prop_eval ∷ (Eq a, Read a) ⇒ Exp a → Property
 prop_eval exp = M.monadicIO $ do
   value ← M.run (compileRun exp)
   M.assert (eval exp == value)
 
-prop_eval₁ ∷ Fun Exp Exp → Exp → Property
-prop_eval₁ (Fun _ f) (appVar → exp) = M.monadicIO $ do
-  let result = eval (f exp)
-  b ← read <$> M.run (run f [eval exp])
+prop_eval' ∷ Hidden → Property
+prop_eval' (exp ::: _) = M.monadicIO $ do
+  value ← M.run (compileRun exp)
+  M.assert (eval exp == value)
 
-  M.assert (result == b)
+prop_bool ∷ Exp Bool → Property
+prop_bool = mapSize (* 1000) . prop_eval
 
-infixr +
-type a + b = Either a b
+prop_int ∷ Exp Int → Property
+prop_int = prop_eval
 
-pattern VAR s     = Left s
-pattern II  s     = Right (Left s)
-pattern ADD x y   = Right (Right (Left (x, y)))
-pattern MUL x y   = Right (Right (Right (Left (x, y))))
-pattern ITE x y c = Right (Right (Right (Right (x, y, c))))
+tst' ∷ IO ()
+tst' = verboseCheckWith stdArgs { maxSuccess = 10 } prop_eval'
 
-instance Function Exp where
-  function ∷ (Exp → b) → (Exp :-> b)
-  function = functionMap a b where
-    a ∷ Exp → String + Integer + (Exp, Exp) + (Exp, Exp) + (Exp, Exp, Exp)
-    a (Var s)    = VAR s
-    a (I i)      = II i
-    a (Add x y)  = ADD x y
-    a (Mul x y)  = MUL x y
-    a (If c t h) = ITE c t h
+tst ∷ IO ()
+tst = quickCheckWith stdArgs { maxSuccess = 100 } prop_eval'
 
-    b ∷ String + Integer + (Exp, Exp) + (Exp, Exp) + (Exp, Exp, Exp) → Exp
-    b (VAR s)     = Var s
-    b (II i)      = I i
-    b (ADD x y)   = Add x y
-    b (MUL x y)   = Mul x y
-    b (ITE c t e) = If c t e
+-- shrink ∷ Exp → [Exp]
+-- shrink = genericShrink
 
-prop_foo ∷ Fun t Int → t → Bool
-prop_foo (Fun _ f) x = do
-  f x == f x
+-- arbExp ∷ Gen Exp
+-- arbExp = arbitrary
 
-haha = \case
-  Var "var1" → I 0
-  _          → I (-1)
--- Add (I (-1)) (I 1)
--- HAHA∶ 1
+-- zeroExpr ∷ Gen Exp → Gen Exp
+-- zeroExpr arb = do
+--   a ← arb
+--   return (a + I (- eval a))
 
+-- z ∷ Gen Exp
+-- z = suchThat arbitrary (\exp → eval exp == 0)
+
+-- prop_foo ∷ Fun t Int → t → Bool
+-- prop_foo (Fun _ f) x = do
+--   f x == f x
 

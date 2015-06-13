@@ -2,6 +2,13 @@
 
 -- http://ellcc.org/demo/index.cgi
 
+-- Metaphors don't inspire definitions but insight and intuition.
+
+-- IC -IC-optimisation→  IC 
+--    -Code-Generation→  Symbolic instructions
+--    -Target-code-opt→  Symbolic instructions
+--    -Machine-code-gen→ Bit patterns
+
 module Funcs where
 
 import Data.Char
@@ -17,35 +24,40 @@ import Data.Monoid
 import Data.Ord
 import Data.List hiding (And, and)
 import Data.Function
-import Data.Foldable (for_)
+import Data.Foldable (for_, traverse_)
 import qualified Data.Foldable as F hiding (And, and)
 import qualified Data.Map as M
 import Control.Monad.State
+import Control.Monad.Writer
 import Numeric.Natural
+import qualified Data.Bits as B
+
+import Control.Lens hiding (index, (<.))
 
 import Codegen
-import Expr
+import Exp
+import Repr
 import Util
 import Vect
 
 type Label = String
 
-compile ∷ Exp → Codegen String
-compile (I n) = do
+compile ∷ Exp a → Codegen String
+compile (LitI n) = do
   return (show n)
 
-compile (B False) = do
-  return "0"
+compile Fls = do
+  return "false"
 
-compile (B True) = do
-  return "1"
+compile Tru = do
+  return "true"
 
-compile (e₁ :+: e₂) = do
+compile (Add e₁ e₂) = do
   reg₁ ← compile e₁
   reg₂ ← compile e₂
   add reg₁ reg₂
 
-compile (e₁ :×: e₂) = do
+compile (Mul e₁ e₂) = do
   reg₁ ← compile e₁
   reg₂ ← compile e₂
   mul reg₁ reg₂
@@ -58,38 +70,41 @@ compile (And e₁ e₂) = do
 compile (Xor e₁ e₂) = do
   reg₁ ← compile e₁
   reg₂ ← compile e₂
-  xor reg₁ reg₂
+  xor "i64" reg₁ reg₂
+
+compile (Not bool) = do
+  b ← compile bool
+  xor "i1" b "true"
 
 compile (e₁ :≤: e₂) = do
   reg₁ ← compile e₁
   reg₂ ← compile e₂
 
-  bit ← reg₁ ≤ reg₂
-  "conv" `namedInstr` printf "zext i1 %s to i64" bit
+  reg₁ ≤ reg₂
+  -- "conv" `namedInstr` printf "zext i1 %s to i64" bit
 
 compile (Var str)    = do
   return ("%" ++ str)
 
-compile (Fn₁ name a) = do
-  param ← compile a
-  instr (printf "call i64 @%s(i64 %s" name param)
+-- compile (Fn₁ name a) = do
+--   param ← compile a
+--   instr (printf "call i64 @%s(i64 %s" name param)
 
 -- http://www.stephendiehl.com/llvm/#if-expressions
 compile (If cond tru fls) = do
-  ifthen ← addBlock "if.then"
-  ifelse ← addBlock "if.else"
-  ifcont ← addBlock "if.cont"
+  if_then ← addBlock "if.then"
+  if_else ← addBlock "if.else"
+  if_cont ← addBlock "if.cont"
 
   condition ← compile cond
-  test      ← "0" ≠ condition
-  br test ifthen ifelse
+  br condition if_then if_else
 
   let 
-    block ∷ (Exp, Label) → Codegen (String, Label)
+    block ∷ (Exp a, Label) → Codegen (String, Label)
     block (val, lbl) = do
       setBlock lbl
       foo ← compile val
-      jmp ifcont
+      jmp if_cont
 
       -- This is important (see link) “The problem is that theifthen
       -- expression may actually itself change the block that the
@@ -101,81 +116,121 @@ compile (If cond tru fls) = do
       lbl ← getBlock
       return (foo, lbl)
 
-  true  ← block (tru, ifthen)
-  false ← block (fls, ifelse)
+  true  ← block (tru, if_then)
+  false ← block (fls, if_else)
 
-  setBlock ifcont
-  φ "i64" true false
+  setBlock if_cont
+  φ (showTy tru) true false
 
--- 
-compile (While condTest body init) = mdo
-  undefined 
+-- compile (While condTest body init) = mdo
+--   undefined 
 
-compile (Arr _ ixf) = mdo
-  entry ← getBlock
-  loop  ← addBlock "arr.loop"
-  post  ← addBlock "arr.post"
+compile (Pair x y) = do
+  let insNum ∷ String → Int → String → Codegen String
+      insNum pair index reg = 
+        namedInstr "updated" 
+         (printf "insertvalue %%pairi64i64 %s, i64 %s, %d" pair reg index)
 
-  jmp loop
+      mkPair ∷ String → String → Codegen String
+      mkPair x y = do
+       let initVal = "{i64 undef, i64 undef}"
+       retVal₁ ← insNum initVal 0 x
+       retVal₂ ← insNum retVal₁ 1 y
+       return retVal₂
+
+  val₁  ← compile x
+  val₂  ← compile y
+  
+  mkPair val₁ val₂
+
+compile (Fst pair) = do
+  π(0) =<< compile pair
+
+compile (Snd pair) = do
+  π(1) =<< compile pair
+
+compile (Arr len ixf) = mdo
+  entry   ← getBlock
+  loop_1  ← addBlock "arr.loop1"
+  loop_2  ← addBlock "arr.loop2"
+  post    ← addBlock "arr.post"
+
+  arrLength  ← compile len
+  arrMem     ← mallocStr arrLength
+  buffer     ← getBuffer arrMem
+
+  jmp loop_1
 
   -- | arr.loop
-  -- Increment from [0…len) and 
-  setBlock loop
+  -- Increment from [0…len) 
+  setBlock loop_1
   i₀  ← φ "i64" ("0", entry)
-                (i₁ , loop')
+                (i₁ , loop_2')
   i₁  ← incr i₀
 
-  ptr   ← "ptr" `namedInstr` printf "getelementptr i64* %%mem1, i64 %s" i₀
+  keepGoing ← i₀ <. arrLength
+  br keepGoing loop_2 post
+
+  setBlock loop_2 
+
+  ptr ← namedInstr "ptr" (printf "getelementptr i64* %s, i64 %s" buffer i₀)
 
   value ← compile (ixf (Var (tail i₀)))
-  loop' ← getBlock 
+  loop_2' ← getBlock
 
-  value ≔ ptr
+  ptr ≔ value
+  jmp loop_1
 
-  cmp ← "9" ≡ i₀
-  
-  br cmp post loop
-  setBlock loop
+  setBlock post 
 
   -- | arr.post
   setBlock post
 
-  compile 42
+  instr_ (printf "call void @printString(%%String* %s)" arrMem)
+  return arrMem
 
-compile (Len (Arr len ixf)) = do
-  compile len
+-- compile (Len (Arr len _)) = do
+--   compile len
 
-compile (ArrIx (Var mem) index) = do
-  ix  ← compile index
-  ptr ← "ptr" `namedInstr` printf "getelementptr i64* %%%s, i64 %s" mem ix
-  "load" `namedInstr` printf "load i64* %s" ptr
+compile (Len arr) = do
+  compile arr >>= getLength >>= i32toi64
 
 compile (ArrIx arr index) = do
-  -- ix  ← compile index
-  -- ptr ← "ptr" `namedInstr` printf "getelementptr i64* %%%s, i64 %s" mem ix
-  -- "load" `namedInstr` printf "load i64, i64* %s" ptr
-  undefined 
+  array_val ← compile arr
+  index_val ← i32toi64 =<< compile index
 
-compileExp ∷ Comp a ⇒ a → (([String], String), CodegenState)
-compileExp exp = runCodegen $ do
-  addBlock "entry" 
-  (args, reg) ← comp exp
-  reg ← terminate ("ret i64 " ++ reg)
-  return (args, reg)
+  buffer   ← getBuffer array_val
+
+  elt_ptr ← namedInstr "ptr" 
+    (printf "getelementptr i64* %s, i64 %s" buffer index_val)
+  namedInstr "length" (printf "load i64* %s" elt_ptr)
+
+--   -- ix  ← compile index
+--   -- ptr ← "ptr" `namedInstr` printf "getelementptr i64* %%%s, i64 %s" mem ix
+--   -- "load" `namedInstr` printf "load i64, i64* %s" ptr
+--   undefined 
+
+-- compile (ArrIx (Var mem) index) = do
+--   ix  ← compile index
+--   ptr ← "ptr" `namedInstr` printf "getelementptr i64* %%%s, i64 %s" mem ix
+--   "load" `namedInstr` printf "load i64* %s" ptr
+
 
 pattern Stdout a ← (ExitSuccess, a, _)
 pattern Stderr b ← (ExitFailure _, _, b)
+
+pattern Int      ∷ Int → String
 pattern Int    n ← (readMaybe → Just (n ∷ Int))
 
-run ∷ Comp a ⇒ a → [Integer] → IO String
-run exp xs = do
-  let ((args, reg), code) = compileExp exp
+getOutput ∷ Comp a ⇒ a → [Integer] → IO String
+getOutput exp xs = do
+  let ((args, reg, returnType), code) = compileExp exp
 
       code₁ = M.toList (blocks code)
       code₂ = sortBy (comparing (index . snd)) code₁
 
   let comma = intercalate ", "
-      args' = comma $ ["i64* %mem1", "i64* %mem2"]
+      args' = comma $ ["i64* %mem1bbb", "i64* %mem2bbb"]
                    ++ [ "i64 %" ++ arg    | arg ← args ]
       xs'   = comma $ ["i64* %mem1.b", "i64* %mem2.b"]
                    ++ [ "i64 "  ++ show x | x   ← xs   ]
@@ -184,26 +239,32 @@ run exp xs = do
     hPutStrLn(h) "@.str = private unnamed_addr constant [4 x i8] c\"%d\\0A\\00\", align 1"
     hPutStrLn(h) "@fmt  = internal constant [5 x i8] c\"%d, \\00\""
     hPutStrLn(h) "@nil  = internal constant [1 x i8] c\"\\00\""
+    hPutStrLn(h) "@tru  = internal constant [5 x i8] c\"True\\00\""
+    hPutStrLn(h) "@fls  = internal constant [6 x i8] c\"False\\00\""
+    hPutStrLn(h) "@pair = internal constant [13 x i8] c\"(%llu, %llu)\\00\""
+    hPutStrLn(h) "%pairi64i64 = type { i64, i64 }"
+    hPutStrLn(h) "%String = type { i64*, i32 }"
 
-    hPutStrLn(h) "declare i32 @printf(i8* nocapture, ...) nounwind"
+    hPutStrLn(h) "declare i32  @printf(i8* nocapture, ...) nounwind"
+    hPutStrLn(h) "declare i64  @putint(i64)"
+    hPutStrLn(h) "declare i64  @plusone(i64)"
+    hPutStrLn(h) "declare i32  @puts(i8*)"
+    hPutStrLn(h) "declare i8*  @memcpy(i8*, i8*, i32)"
+    hPutStrLn(h) "declare i8*  @malloc(i32)"
+    hPutStrLn(h) "declare void @free(i8*)"
     hPutStrLn(h) ""
-    hPutStrLn(h) "declare i64 @putint(i64 %x)"
-    hPutStrLn(h) ""
-    hPutStrLn(h) "declare i64 @plusone(i64 %x)"
-    hPutStrLn(h) ""
-    hPutStrLn(h) "declare i32 @puts(i8*)"
-    hPutStrLn(h) ""
-
+    hPutStrLn(h) showBit
     hPutStrLn(h) initialise
-    hPutStrLn(h) ""
     hPutStrLn(h) buttCode
-    hPutStrLn(h) ""
     hPutStrLn(h) nlCode
-    hPutStrLn(h) ""
     hPutStrLn(h) printArray
+    hPutStrLn(h) printString
+    hPutStrLn(h) initPair
+    hPutStrLn(h) showPair
+    hPutStrLn(h) stringCreateDefault
     hPutStrLn(h) ""
 
-    hPrintf(h)   "define i64 @foobar(%s) {\n" args'
+    hPrintf(h)   "define %s @foobar(%s) {\n" returnType args' 
 
     forM_ code₂ $ \(label, MkBB{..}) → do
       hPrintf(h) "%s:\n" label
@@ -233,25 +294,40 @@ run exp xs = do
       hPrintf(h) "  store i64 %d, i64* %%index%d\n" msg index
       hPrintf(h) "  store i64 %d, i64* %%ind%d\n" key index
 
-    hPutStrLn(h) ("  %1 = call i64 @foobar(" ++ xs' ++ ")")
-    hPutStrLn(h) "  call void @printArray(i64* %mem1.b)"
-    hPutStrLn(h) "  call void @printArray(i64* %mem2.b)"
-    hPutStrLn(h) "  call void @nl()"
-    hPutStrLn(h) "  tail call i32 (i8*, ...)* @printf(i8* getelementptr inbounds ([4 x i8]* @.str, i64 0, i64 0), i64 %1) nounwind"
+    hPrintf(h)   "  %%1 = call %s @foobar(%s)\n" returnType xs'
+    -- hPutStrLn(h) "  call void @printArray(i64* %mem1.b)"
+    -- hPutStrLn(h) "  call void @printArray(i64* %mem2.b)"
+    -- hPutStrLn(h) "  call void @nl()"
+    hPutStrLn(h) (dispatch returnType)
     hPutStrLn(h) "  ret i32 0"
     hPutStrLn(h) "}")
 
-  readProcess "lli" [
       -- "-load=/home/baldur/repo/code/libfuncs.so", 
-      "/tmp/foo.ll"
-    ] ""
+  foo ← readProcessWithExitCode "lli-3.6" ["/tmp/foo.ll"] "" 
+  case foo of
+    Stdout output → return output
+    _             → return $ show foo
 
-run'' ∷ Exp → IO ()
-run'' (exp ∷ Exp) = putStrLn (run' exp [])
+blabla ∷ IO ()
+blabla = do
+  system "llc-3.6 -filetype=obj /tmp/foo.ll -o /tmp/foo.o"
+  system "gcc -o /tmp/foo /tmp/foo.o  -L/usr/lib/i386-linux-gnu -lstdc++"
+  system "/tmp/foo" 
+    & void
 
-run' ∷ Exp → [Integer] → String
+dispatch ∷ String → String
+dispatch "i1"  = 
+  "  call void @showbit(i1 %1)"
+dispatch "i64" = 
+  "  tail call i32 (i8*, ...)* @printf(i8* getelementptr inbounds ([4 x i8]* @.str, i64 0, i64 0), i64 %1) nounwind"
+dispatch "%pairi64i64" = 
+  "  call void @showpair(%pairi64i64 %1)"
+dispatch "%String*" = 
+  "  "
+
+run' ∷ Exp a → [Integer] → String
 run' exp xs = let
-  ((args, reg), code) = compileExp exp
+  ((args, reg, _), code) = compileExp exp
 
   code₁ = M.toList (blocks code)
   code₂ = sortBy (comparing (index . snd)) code₁
@@ -264,25 +340,27 @@ run' exp xs = let
   | (label, MkBB{..}) ← code₂ 
   ]
 
-eval ∷ Exp → Integer
+eval ∷ Exp a → a
 eval = \case
-  I a              → a
-  Add a b          → eval a + eval b
-  Mul a b          → eval a * eval b
+  LitI a   → a
+  LitB b   → b
+  Not b    → not (eval b)
+  Pair a b → (eval a, eval b)
+  Fst a    → fst (eval a)
+  Snd a    → snd (eval a)
+  Add a b  → eval a + eval b
+  a :≤: b  → eval a <= eval b
+  And a b  → eval a && eval b
+  Mul a b  → eval a * eval b
+  Xor a b  → B.xor (eval a) (eval b)
   If c a b 
-    | eval c /= 0  → eval a 
-    | otherwise    → eval b
-  Var{} → error "VAR"
-  Fn{}  → error "FN"
-  Lam{} → error "LAM"
-  Arr{} → error "ARR"
-  Len{} → error "LEN"
-
-test ∷ Exp → IO String
-test exp = run exp []
-
-test' ∷ Exp → IO ()
-test' exp = putStrLn =<< run exp []
+    | eval c    → eval a
+    | otherwise → eval b
+  Arr len ixf → let
+    ℓ  = eval len
+    is = [0..ℓ-1]
+    in undefined
+  a → error ("ERROR: " ++ show a)
 
 -- dsp ∷ Exp → IO ()
 -- dsp exp = do
@@ -291,27 +369,80 @@ test' exp = putStrLn =<< run exp []
 --   as ← readProcess "llvm-as-3.4" [] "bound"
 --   return ()
 
--- f ∶ M → ℂ
--- f ∶ M → ℂ
-
--- comp ∶             (Exp) → Codegen String
--- comp ∶       (Exp → Exp) → Codegen String
--- comp ∶ (Exp → Exp → Exp) → Codegen String
-class Comp a where
-  comp ∷ a → Codegen ([String], String)
-
-instance Comp Exp where
-  comp ∷ Exp → Codegen ([String], String)
-  comp e = ([], ) <$> compile e
-
-instance Comp p ⇒ Comp (Exp → p) where
-  comp ∷ (Exp → p) → Codegen ([String], String)
-  comp f = do
-    arg          ← [ printf "var%d" x | x ← fresh ]
-    (args, code) ← comp (f (Var arg))
-
-    return (arg : args, code)
-
 -- Feldspar compiler's input is a core language program represented as
 -- a graph.  This graph is first transformed to an ABSTRACT
 -- IMPERAITIVE PROGRAM that is no longer purely functional. 
+
+foo ∷ Exp Bool → Exp Int
+foo a = if a then 2 else 10
+
+-- Compile
+
+-- comp ∶ (Exp a)                 → Codegen String
+-- comp ∶ (Exp a → Exp b)         → Codegen String
+-- comp ∶ (Exp a → Exp b → Exp c) → Codegen String
+class Comp a where
+  comp ∷ a → Codegen ([String], String, Maybe String)
+
+instance Comp (Exp a) where
+  comp ∷ Exp a → Codegen ([String], String, Maybe String)
+  comp exp = do
+    compiled ← compile exp
+    return ([], compiled, Just (showTy exp))
+
+instance Comp p ⇒ Comp (Exp a → p) where
+  comp ∷ (Exp a → p) → Codegen ([String], String, Maybe String)
+  comp f = do
+    arg                   ← [ printf "var%d" x | x ← fresh ]
+    (args, code, Nothing) ← comp (f (Var arg))
+
+    return (arg : args, code, Nothing)
+
+foobar ∷ Codegen ([String], String, Maybe String) 
+       → Codegen ([String], String, Maybe String)
+foobar codegen = do
+  (args, reg, Just returnType) ← codegen
+  reg ← terminate (printf "ret %s %s" returnType reg)
+  undefined 
+
+compileExp ∷ Comp a ⇒ a → (([String], String, String), CodegenState)
+compileExp exp = runCodegen $ do
+  -- Create the entry basic block
+  prologue
+
+  (args, reg, Just returnType) ← free'd (comp exp)
+
+  
+
+  reg ← terminate (printf "ret %s %s" returnType reg)
+
+  return (args, reg, returnType)
+
+  where
+    prologue ∷ Codegen ()
+    prologue = void (addBlock "entry")
+
+    -- Free pointers in epilogue
+    free'd ∷ Codegen a → Codegen a
+    free'd = useOutput (traverse_ free) 
+
+run ∷ Exp a → IO ()
+run exp = putStrLn =<< getOutput exp []
+
+runI ∷ Exp Int → IO ()
+runI = run
+
+code ∷ Exp a → IO ()
+code exp = putStrLn (run' exp [])
+
+codeI ∷ Exp Int → IO ()
+codeI = code
+
+test' ∷ Exp a → IO String
+test' exp = getOutput exp []
+
+compileRun ∷ Read a ⇒ Exp a → IO a
+compileRun exp = 
+  read . last . lines <$> test' exp
+
+
