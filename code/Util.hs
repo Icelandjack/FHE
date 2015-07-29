@@ -4,6 +4,8 @@ import Debug.Trace
 import Control.Exception (evaluate)
 -- import Codegen
 import Control.Monad.Writer
+import Text.Read (readMaybe)
+import System.Exit
 
 bind2 ∷ (Monad m) ⇒ (a → b → m c) → m a → m b → m c
 bind2 f m1 m2 = do
@@ -35,3 +37,11 @@ evalWriterT c = fst <$> runWriterT c
 
 evalWriter ∷ Writer w a → a
 evalWriter = fst . runWriter 
+
+pattern Stdout a ← (ExitSuccess, a, _)
+pattern Stderr b ← (ExitFailure _, _, b)
+
+pattern Int ∷ Int → String
+pattern Int n ← (readMaybe → Just (n ∷ Int)) where
+        Int n = show n
+

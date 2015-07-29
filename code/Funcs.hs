@@ -14,10 +14,8 @@ module Funcs where
 import Data.Char
 import System.Process
 import System.IO
-import System.Exit
 import Control.Applicative
 import Data.Maybe
-import Text.Read (readMaybe)
 import Text.Printf
 import Prelude hiding (and)
 import Data.Monoid 
@@ -32,14 +30,23 @@ import Control.Monad.Writer
 import Numeric.Natural
 import qualified Data.Bits as B
 
-import Control.Lens hiding (index, (<.))
+import GHC.Read
+import Test.QuickCheck.Monadic hiding (run)
+import qualified Test.QuickCheck.Monadic as M
+import Control.Lens.Internal.Setter
+import Control.Lens.TH
+
+import Control.Lens hiding (index, (<.), Indexed)
 
 import Codegen
 import Exp
 import Repr
 import Util
 import Vect
+import Types
 
+import Data.Proxy
+  
 type Label = String
 
 compile ∷ Exp a → Codegen String
@@ -70,7 +77,7 @@ compile (And e₁ e₂) = do
 compile (Xor e₁ e₂) = do
   reg₁ ← compile e₁
   reg₂ ← compile e₂
-  xor "i64" reg₁ reg₂
+  xor "i32" reg₁ reg₂
 
 compile (Not bool) = do
   b ← compile bool
@@ -83,8 +90,8 @@ compile (e₁ :≤: e₂) = do
   reg₁ ≤ reg₂
   -- "conv" `namedInstr` printf "zext i1 %s to i64" bit
 
-compile (Var str)    = do
-  return ("%" ++ str)
+compile (Var n)    = do
+  return ("%var" ++ show n)
 
 -- compile (Fn₁ name a) = do
 --   param ← compile a
@@ -122,18 +129,15 @@ compile (If cond tru fls) = do
   setBlock if_cont
   φ (showTy tru) true false
 
--- compile (While condTest body init) = mdo
---   undefined 
-
 compile (Pair x y) = do
   let insNum ∷ String → Int → String → Codegen String
       insNum pair index reg = 
         namedInstr "updated" 
-         (printf "insertvalue %%pairi64i64 %s, i64 %s, %d" pair reg index)
+         (printf "insertvalue %%pairi32i32 %s, i32 %s, %d" pair reg index)
 
       mkPair ∷ String → String → Codegen String
       mkPair x y = do
-       let initVal = "{i64 undef, i64 undef}"
+       let initVal = "{i32 undef, i32 undef}"
        retVal₁ ← insNum initVal 0 x
        retVal₂ ← insNum retVal₁ 1 y
        return retVal₂
@@ -149,22 +153,50 @@ compile (Fst pair) = do
 compile (Snd pair) = do
   π(1) =<< compile pair
 
-compile (Arr len ixf) = mdo
+compile (While n condTest body init) = mdo
+  entry       ← getBlock
+  while_test  ← addBlock "while.test"
+  while_body  ← addBlock "while.body"
+  while_post  ← addBlock "while.post"
+
+  init_val ← compile init
+  jmp while_test
+
+  -- TEST
+  setBlock while_test
+  val_1 ← φ "i32" (init_val, entry)
+                  (val_2,    while_body)
+
+  variable ← addInstr n ("add i32 0, " ++ val_1)
+
+  keepGoing ← compile condTest
+  br keepGoing while_body while_post
+
+  -- BODY
+  setBlock while_body
+  val_2 ← compile body 
+  jmp while_test
+
+  -- POST
+  setBlock while_post
+  return variable
+
+compile (Arr len n ixf) = mdo
   entry   ← getBlock
   loop_1  ← addBlock "arr.loop1"
   loop_2  ← addBlock "arr.loop2"
   post    ← addBlock "arr.post"
 
-  arrLength  ← compile len
-  arrMem     ← mallocStr arrLength
-  buffer     ← getBuffer arrMem
+  arrLength ← compile len
+  arrMem    ← mallocStr arrLength
+  buffer    ← getBuffer("i32") arrMem
 
   jmp loop_1
 
   -- | arr.loop
   -- Increment from [0…len) 
   setBlock loop_1
-  i₀  ← φ "i64" ("0", entry)
+  i₀  ← φ "i32" ("0", entry)
                 (i₁ , loop_2')
   i₁  ← incr i₀
 
@@ -173,9 +205,9 @@ compile (Arr len ixf) = mdo
 
   setBlock loop_2 
 
-  ptr ← namedInstr "ptr" (printf "getelementptr i64* %s, i64 %s" buffer i₀)
+  ptr ← "ptr" `namedInstr` printf "getelementptr i32* %s, i32 %s" buffer i₀
 
-  value ← compile (ixf (Var (tail i₀)))
+  value ← undefined  --compile (ixf (Var (tail i₀)))
   loop_2' ← getBlock
 
   ptr ≔ value
@@ -186,233 +218,149 @@ compile (Arr len ixf) = mdo
   -- | arr.post
   setBlock post
 
-  instr_ (printf "call void @printString(%%String* %s)" arrMem)
   return arrMem
 
 -- compile (Len (Arr len _)) = do
 --   compile len
 
 compile (Len arr) = do
-  compile arr >>= getLength >>= i32toi64
+  compile arr >>= getLength -- >>= i32toi64
 
 compile (ArrIx arr index) = do
   array_val ← compile arr
-  index_val ← i32toi64 =<< compile index
+  index_val ← {- i32toi64 =<< -} compile index
 
-  buffer   ← getBuffer array_val
+  buffer   ← getBuffer("i32") array_val
 
   elt_ptr ← namedInstr "ptr" 
-    (printf "getelementptr i64* %s, i64 %s" buffer index_val)
-  namedInstr "length" (printf "load i64* %s" elt_ptr)
+    (printf "getelementptr i32* %s, i32 %s" buffer index_val)
+  namedInstr "length" (printf "load i32* %s" elt_ptr)
 
---   -- ix  ← compile index
---   -- ptr ← "ptr" `namedInstr` printf "getelementptr i64* %%%s, i64 %s" mem ix
---   -- "load" `namedInstr` printf "load i64, i64* %s" ptr
---   undefined 
+compile (Lam n body) = 
+  undefined 
 
--- compile (ArrIx (Var mem) index) = do
---   ix  ← compile index
---   ptr ← "ptr" `namedInstr` printf "getelementptr i64* %%%s, i64 %s" mem ix
---   "load" `namedInstr` printf "load i64* %s" ptr
+foobarDef ∷ (([String], t, String), CodegenState) → [Integer] → Writer [String] ()
+foobarDef ((args, reg, returnType), code) xs = do
+  tell [printf "define %s @foobar(%s) {" returnType args']
+  foobarBody sortedCode
+  tell ["}"]
 
+  where
+  foobarBody ∷ MonadWriter [String] f ⇒ [(String, BasicBlock)] → f ()
+  foobarBody code = do
+    for_ code $ \(label, MkBB{..}) → do
+      tell [label ++ ":"]
+      for_ _instructions $ \instruction → do
+        tell ["  " ++ instruction]
+      tell ["  " ++ _terminator]
 
-pattern Stdout a ← (ExitSuccess, a, _)
-pattern Stderr b ← (ExitFailure _, _, b)
+  sortedCode ∷ [(String, BasicBlock)]
+  sortedCode = M.toList (_blocks code)
+    & sortOn (_index' . snd)
 
-pattern Int      ∷ Int → String
-pattern Int    n ← (readMaybe → Just (n ∷ Int))
+  comma = intercalate ", "
 
-getOutput ∷ Comp a ⇒ a → [Integer] → IO String
-getOutput exp xs = do
-  let ((args, reg, returnType), code) = compileExp exp
+  isArray ∷ Bool
+  isArray = returnType == "%Arr*"
 
-      code₁ = M.toList (blocks code)
-      code₂ = sortBy (comparing (index . snd)) code₁
+  args' = comma $ [ "%Arr** %out" | isArray    ] 
+               ++ [ "i32 %" ++ arg   | arg ← args ]
 
-  let comma = intercalate ", "
-      args' = comma $ ["i64* %mem1bbb", "i64* %mem2bbb"]
-                   ++ [ "i64 %" ++ arg    | arg ← args ]
-      xs'   = comma $ ["i64* %mem1.b", "i64* %mem2.b"]
-                   ++ [ "i64 "  ++ show x | x   ← xs   ]
+mainDef ∷ (([String], t, String), CodegenState) → [Integer] → Writer [String] ()
+mainDef ((args, reg, returnType), code) xs = do
+  let isArray ∷ Bool
+      isArray = returnType == "%Arr*"
 
-  withFile "/tmp/foo.ll" WriteMode (\h → do
-    hPutStrLn(h) "@.str = private unnamed_addr constant [4 x i8] c\"%d\\0A\\00\", align 1"
-    hPutStrLn(h) "@fmt  = internal constant [5 x i8] c\"%d, \\00\""
-    hPutStrLn(h) "@nil  = internal constant [1 x i8] c\"\\00\""
-    hPutStrLn(h) "@tru  = internal constant [5 x i8] c\"True\\00\""
-    hPutStrLn(h) "@fls  = internal constant [6 x i8] c\"False\\00\""
-    hPutStrLn(h) "@pair = internal constant [13 x i8] c\"(%llu, %llu)\\00\""
-    hPutStrLn(h) "%pairi64i64 = type { i64, i64 }"
-    hPutStrLn(h) "%String = type { i64*, i32 }"
+      xs' = intercalate ", " $
+          [ "%Arr** %arrmem" | isArray ]
+       ++ [ "i32 "  ++ show x   | x ← xs  ]
 
-    hPutStrLn(h) "declare i32  @printf(i8* nocapture, ...) nounwind"
-    hPutStrLn(h) "declare i64  @putint(i64)"
-    hPutStrLn(h) "declare i64  @plusone(i64)"
-    hPutStrLn(h) "declare i32  @puts(i8*)"
-    hPutStrLn(h) "declare i8*  @memcpy(i8*, i8*, i32)"
-    hPutStrLn(h) "declare i8*  @malloc(i32)"
-    hPutStrLn(h) "declare void @free(i8*)"
-    hPutStrLn(h) ""
-    hPutStrLn(h) showBit
-    hPutStrLn(h) initialise
-    hPutStrLn(h) buttCode
-    hPutStrLn(h) nlCode
-    hPutStrLn(h) printArray
-    hPutStrLn(h) printString
-    hPutStrLn(h) initPair
-    hPutStrLn(h) showPair
-    hPutStrLn(h) stringCreateDefault
-    hPutStrLn(h) ""
+  tell [ "define i32 @main(i32 %argc, i8** %argv) {" ]
 
-    hPrintf(h)   "define %s @foobar(%s) {\n" returnType args' 
+  tell [ "  %arrmem = alloca %Arr*"             | isArray   ]
+  tell [ printf "  %%1 = call %s @foobar(%s)" returnType xs' ]
 
-    forM_ code₂ $ \(label, MkBB{..}) → do
-      hPrintf(h) "%s:\n" label
-      forM_ instructions $ \instruction → do
-        hPrintf(h) "  %s\n" instruction
-      hPrintf(h) "  %s\n" terminator
+  tell [ "  %arr = load %Arr** %arrmem"         | isArray   ]
+  tell [ "  call void @printArr(%Arr* %arr)" | isArray   ]
 
-    -- hPutStrLn(h) "  ret i64 %x"
-    hPutStrLn(h) "}"
-    hPutStrLn(h) ""
-    
-    hPutStrLn(h) "define i32 @main(i32 %argc, i8** %argv) {"
-    hPutStrLn(h) "  %mem1.a = alloca [10 x i64]"
-    hPutStrLn(h) "  %mem2.a = alloca [10 x i64]"
-    hPutStrLn(h) "  %mem1.b = bitcast [10 x i64]* %mem1.a to i64*"
-    hPutStrLn(h) "  %mem2.b = bitcast [10 x i64]* %mem2.a to i64*"
-    hPutStrLn(h) "  call void @initialise(i64* %mem1.b)"
-    hPutStrLn(h) "  call void @initialise(i64* %mem2.b)"
-
-    let 
-      msg_key ∷ [(Int, Int, Int)]
-      msg_key = zipWith3 (,,) [0..] (map ord "Baldur") (map ord "ABCD12345")
-
-    for_ msg_key $ \(index, msg, key) → do
-      hPrintf(h) "  %%index%d = getelementptr i64* %%mem1.b, i64 %d\n" index index
-      hPrintf(h) "  %%ind%d = getelementptr i64* %%mem2.b, i64 %d\n" index index
-      hPrintf(h) "  store i64 %d, i64* %%index%d\n" msg index
-      hPrintf(h) "  store i64 %d, i64* %%ind%d\n" key index
-
-    hPrintf(h)   "  %%1 = call %s @foobar(%s)\n" returnType xs'
-    -- hPutStrLn(h) "  call void @printArray(i64* %mem1.b)"
-    -- hPutStrLn(h) "  call void @printArray(i64* %mem2.b)"
-    -- hPutStrLn(h) "  call void @nl()"
-    hPutStrLn(h) (dispatch returnType)
-    hPutStrLn(h) "  ret i32 0"
-    hPutStrLn(h) "}")
-
-      -- "-load=/home/baldur/repo/code/libfuncs.so", 
-  foo ← readProcessWithExitCode "lli-3.6" ["/tmp/foo.ll"] "" 
-  case foo of
-    Stdout output → return output
-    _             → return $ show foo
-
-blabla ∷ IO ()
-blabla = do
-  system "llc-3.6 -filetype=obj /tmp/foo.ll -o /tmp/foo.o"
-  system "gcc -o /tmp/foo /tmp/foo.o  -L/usr/lib/i386-linux-gnu -lstdc++"
-  system "/tmp/foo" 
-    & void
-
-dispatch ∷ String → String
-dispatch "i1"  = 
-  "  call void @showbit(i1 %1)"
-dispatch "i64" = 
-  "  tail call i32 (i8*, ...)* @printf(i8* getelementptr inbounds ([4 x i8]* @.str, i64 0, i64 0), i64 %1) nounwind"
-dispatch "%pairi64i64" = 
-  "  call void @showpair(%pairi64i64 %1)"
-dispatch "%String*" = 
-  "  "
-
-run' ∷ Exp a → [Integer] → String
-run' exp xs = let
-  ((args, reg, _), code) = compileExp exp
-
-  code₁ = M.toList (blocks code)
-  code₂ = sortBy (comparing (index . snd)) code₁
-
-  args' = intercalate ", " [ "i64 %" ++ arg    | arg ← args ]
-  xs'   = intercalate ", " [ "i64 "  ++ show x | x   ← xs   ]
-
-  in unlines [ 
-    unlines $ (label ++ ":") : map ("  " ++) (instructions ++ [terminator]) 
-  | (label, MkBB{..}) ← code₂ 
-  ]
-
-eval ∷ Exp a → a
-eval = \case
-  LitI a   → a
-  LitB b   → b
-  Not b    → not (eval b)
-  Pair a b → (eval a, eval b)
-  Fst a    → fst (eval a)
-  Snd a    → snd (eval a)
-  Add a b  → eval a + eval b
-  a :≤: b  → eval a <= eval b
-  And a b  → eval a && eval b
-  Mul a b  → eval a * eval b
-  Xor a b  → B.xor (eval a) (eval b)
-  If c a b 
-    | eval c    → eval a
-    | otherwise → eval b
-  Arr len ixf → let
-    ℓ  = eval len
-    is = [0..ℓ-1]
-    in undefined
-  a → error ("ERROR: " ++ show a)
-
--- dsp ∷ Exp → IO ()
--- dsp exp = do
---   foo_ll ← readFile "/tmp/foo.ll"
---   putStrLn foo_ll
---   as ← readProcess "llvm-as-3.4" [] "bound"
---   return ()
+  tell [dispatch returnType,
+        "  ret i32 0",
+        "}"]
 
 -- Feldspar compiler's input is a core language program represented as
 -- a graph.  This graph is first transformed to an ABSTRACT
 -- IMPERAITIVE PROGRAM that is no longer purely functional. 
-
-foo ∷ Exp Bool → Exp Int
-foo a = if a then 2 else 10
 
 -- Compile
 
 -- comp ∶ (Exp a)                 → Codegen String
 -- comp ∶ (Exp a → Exp b)         → Codegen String
 -- comp ∶ (Exp a → Exp b → Exp c) → Codegen String
-class Comp a where
-  comp ∷ a → Codegen ([String], String, Maybe String)
 
-instance Comp (Exp a) where
-  comp ∷ Exp a → Codegen ([String], String, Maybe String)
-  comp exp = do
-    compiled ← compile exp
-    return ([], compiled, Just (showTy exp))
+blah ∷ (Exp a → Exp b) → ([Name], Exp b)
+blah f = ([n], body) where
+  n    = 1 + maxLam body
+  body = f (Var n)
 
-instance Comp p ⇒ Comp (Exp a → p) where
-  comp ∷ (Exp a → p) → Codegen ([String], String, Maybe String)
-  comp f = do
-    arg                   ← [ printf "var%d" x | x ← fresh ]
-    (args, code, Nothing) ← comp (f (Var arg))
+blah2 ∷ (Exp a → Exp b → Exp c) → ([Name], Exp c)
+blah2 f = ([n, m], body) where
+  n    = 1 + maxLam body
+  m    = 1 + n
+  body = f (Var n) (Var m)
 
-    return (arg : args, code, Nothing)
+a ∷ Exp a → ([Name], Exp a)
+a exp = ([], exp)
 
-foobar ∷ Codegen ([String], String, Maybe String) 
-       → Codegen ([String], String, Maybe String)
-foobar codegen = do
-  (args, reg, Just returnType) ← codegen
-  reg ← terminate (printf "ret %s %s" returnType reg)
-  undefined 
+b ∷ (Exp a → Exp b) → ([Name], Exp b)
+b exp = ([n], body) where
+  n    = 1 + maxLam body
+  body = exp (Var n)
 
-compileExp ∷ Comp a ⇒ a → (([String], String, String), CodegenState)
+c ∷ (Exp a → Exp b → Exp c) → ([Name], Exp c)
+c exp = ([n, m], body) where
+  n    = 1 + maxLam body
+  m    = 1 + n
+  body = exp (Var n) (Var m)
+
+d ∷ (Exp a → Exp b → Exp c → Exp d) → ([Name], Exp d)
+d exp = ([n, m, i], body) where
+  n    = 1 + maxLam body
+  m    = 1 + n
+  i    = 1 + m
+  body = exp (Var n) (Var m) (Var i)
+
+comp ∷ Exp a → Codegen ([String], String, Maybe String)
+comp exp = do
+  compiled ← compile exp
+  return ([], compiled, Just (showTy exp))
+
+-- class Comp a where
+--   comp ∷ a → Codegen ([String], String, Maybe String)
+
+-- instance Comp (Exp a) where
+--   comp ∷ Exp a → Codegen ([String], String, Maybe String)
+--   comp exp = do
+--     compiled ← compile exp
+--     return ([], compiled, Just (showTy exp))
+
+-- instance Comp p ⇒ Comp (Exp a → p) where
+--   comp ∷ (Exp a → p) → Codegen ([String], String, Maybe String)
+--   comp f = do
+--     arg                   ← fresh
+--     (args, code, Nothing) ← comp (f (Var arg))
+
+--     return (arg : args, code, Nothing)
+
+-- compileExp ∷ Comp a ⇒ a → (([String], String, String), CodegenState)
+compileExp ∷ Exp a → (([String], String, String), CodegenState)
 compileExp exp = runCodegen $ do
   -- Create the entry basic block
   prologue
 
   (args, reg, Just returnType) ← free'd (comp exp)
 
-  
+  when (returnType == "%Arr*")$ do
+    instr_ (printf "store %%Arr* %s, %%Arr** %%out" reg)
 
   reg ← terminate (printf "ret %s %s" returnType reg)
 
@@ -424,25 +372,73 @@ compileExp exp = runCodegen $ do
 
     -- Free pointers in epilogue
     free'd ∷ Codegen a → Codegen a
-    free'd = useOutput (traverse_ free) 
+    free'd = id -- useOutput (traverse_ free) 
 
+-- Run
 run ∷ Exp a → IO ()
-run exp = putStrLn =<< getOutput exp []
+run = (getOutput ?? []) >=> putStrLn
 
 runI ∷ Exp Int → IO ()
 runI = run
 
+runRead ∷ Read a ⇒ Exp a → IO a
+runRead exp = read . last . lines <$> getOutput exp []
+
+-- Code
 code ∷ Exp a → IO ()
-code exp = putStrLn (run' exp [])
+code exp = compileExp exp
+  & (foobarDef ?? [])
+  & execWriter
+  & traverse_ putStrLn
 
 codeI ∷ Exp Int → IO ()
 codeI = code
 
-test' ∷ Exp a → IO String
-test' exp = getOutput exp []
+msg ∷ Exp a → IO ()
+msg exp = do
+  getOutput exp [] 
 
-compileRun ∷ Read a ⇒ Exp a → IO a
-compileRun exp = 
-  read . last . lines <$> test' exp
+  system "llc-3.6 -filetype=obj /tmp/foo.ll -o /tmp/foo.o && gcc -o /tmp/foo /tmp/foo.o -L/usr/lib/i386-linux-gnu -lstdc++ && /tmp/foo"
+    & void
+
+-- -- otp ∷ Vector (Exp Int) → Vector (Exp Int) → Vector (Exp Int)
+-- -- otp = map₂ (⊕)
+
+-- -- _Indexed ∷ Type a ⇒ Iso' (Vector (Exp a)) (Exp [a]) 
+-- -- _Indexed = iso  (\(Indexed l ixf) → Arr l ixf) $ \case
+-- --   Arr l ixf → Indexed l ixf
+
+-- runPure ∷ Comp exp ⇒ exp → [Integer] → Writer [String] ()
+runPure ∷ Exp a → [Integer] → Writer [String] ()
+runPure exp xs = do
+  let result = compileExp exp
+
+  tell constants
+  tell declarations
+  tell definitions
+
+  foobarDef result xs
+  mainDef   result xs
+
+-- getOutput ∷ Comp a ⇒ a → [Integer] → IO String
+getOutput ∷ Exp a → [Integer] → IO String
+getOutput exp xs = do
+  runPure exp xs
+    & execWriter
+    & unlines
+    & writeFile "/tmp/foo.ll"
+
+  -- "-load=/home/baldur/repo/code/libfuncs.so", 
+  foo ← readProcessWithExitCode "lli-3.6" ["/tmp/foo.ll"] "" 
+  case foo of
+    Stdout output → return output
+    _             → return (show foo)
 
 
+allvars ∷ Traversal' (Exp a) Name
+allvars f = \case
+  Var n  → Var <$> f n
+  LitI i → pure $  LitI i
+  LitB b → pure $  LitB b
+  While n a b c → While <$> f n    <*> allvars f a <*> allvars f b <*> allvars f c
+  Fn₂ a b c d e → Fn₂   <$> pure a <*> pure b      <*> pure c      <*> allvars f d <*> allvars f e

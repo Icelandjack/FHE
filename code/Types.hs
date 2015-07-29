@@ -7,6 +7,14 @@ data TypeRep a where
   TPair ∷ TypeRep a → TypeRep b → TypeRep (a, b)
   TFun  ∷ TypeRep a → TypeRep b → TypeRep (a → b)
 
+data CType = CInt | CBool | CArr CType | CPair CType CType | CFun CType CType
+
+toCType ∷ TypeRep a → CType
+toCType TInt        = CInt
+toCType TBool       = CBool
+toCType (TArr a)    = CArr (toCType a)
+toCType (TPair a b) = CPair (toCType a) (toCType b)
+
 deriving instance Show (TypeRep a)
 
 infixr :→:
@@ -14,10 +22,11 @@ pattern (:→:) ∷ t ~ (a → b) ⇒ TypeRep a → TypeRep b → TypeRep t
 pattern ty :→: pe = TFun ty pe
 
 showTypeRep ∷ TypeRep a → String
-showTypeRep TInt        = "i64"
-showTypeRep TBool       = "i1"
-showTypeRep TPair{}     = "%pairi64i64"
-showTypeRep (TArr TInt) = "%String*"
+showTypeRep TInt         = "i32"
+showTypeRep TBool        = "i1"
+showTypeRep TPair{}      = "%pairi32i32"
+showTypeRep (TArr TInt)  = "%Arr*"
+showTypeRep (TArr TBool) = "%BitVector*"
 
 pattern Bools₁ = TBool :→: TBool
 pattern Bools₂ = TBool :→: TBool :→: TBool

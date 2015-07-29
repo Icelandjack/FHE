@@ -13,7 +13,7 @@ data AnyExp where
   Any ∷ Exp a → AnyExp
 
 data Hidden where
-  (:::) ∷ (Read a, Eq a) ⇒ Exp a → TypeRep a → Hidden
+  (:::) ∷ (Read a, Show a, Eq a) ⇒ Exp a → TypeRep a → Hidden
 
 data AnyRep where
   AnyRep ∷ TypeRep a → AnyRep
@@ -22,9 +22,6 @@ deriving instance Show Hidden
 deriving instance Show AnyRep
 
 (//) = div
-
-scale ∷ (Int → Int) → Gen a → Gen a
-scale f g = sized (\n -> resize (f n) g)
 
 sub₂ ∷ Arbitrary a ⇒ Gen a
 sub₂ = scale (// 2) arbitrary
@@ -114,14 +111,29 @@ instance Arbitrary (Exp Bool) where
             , liftA3 If   subtree₃ subtree₃ subtree₃
             ]
 
-prop_eval ∷ (Eq a, Read a) ⇒ Exp a → Property
+-- instance CoArbitrary (Exp Int) where
+--   coarbitrary ∷ Exp Int → (Gen b → Gen b)
+--   coarbitrary = undefined 
+
+instance Arbitrary (Exp [Int]) where
+  arbitrary ∷ Gen (Exp [Int])
+  arbitrary = do
+    n ← frequency
+     [(9, fmap (LitI . abs) arbitrary), 
+      (0, arbitrary)]
+
+    b ∷ Exp Int ← arbitrary
+    return (Arr n (+ b))
+
+prop_eval ∷ (Eq a, Show a, Read a) ⇒ Exp a → Property
 prop_eval exp = M.monadicIO $ do
-  value ← M.run (compileRun exp)
+  value ← M.run (runRead exp)
+  M.run (print value)
   M.assert (eval exp == value)
 
 prop_eval' ∷ Hidden → Property
 prop_eval' (exp ::: _) = M.monadicIO $ do
-  value ← M.run (compileRun exp)
+  value ← M.run (runRead exp)
   M.assert (eval exp == value)
 
 prop_bool ∷ Exp Bool → Property
@@ -129,6 +141,9 @@ prop_bool = mapSize (* 1000) . prop_eval
 
 prop_int ∷ Exp Int → Property
 prop_int = prop_eval
+
+prop_intList ∷ Exp [Int] → Property
+prop_intList = prop_eval
 
 tst' ∷ IO ()
 tst' = verboseCheckWith stdArgs { maxSuccess = 10 } prop_eval'

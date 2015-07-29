@@ -18,8 +18,8 @@ adding numbers from 1 to 4 $(1 + 2) + (3 + 4)$:
 : exp = Add (Add (Val 1) (Val 2))
 :           (Add (Val 3) (Val 4))
 
-which is clunky to write and will only get more unwieldy. Making =Exp= an instance of =Num= will make
-it more convenient to work with:
+This is not a pleasant surface language for users. Making =Exp= an
+instance of =Num= will make it more convenient to work with:
 
 : instance Num Exp where
 :   (+) :: Exp -> Exp -> Exp
@@ -63,10 +63,11 @@ Another observation is to print the expressions as strings:
 : > toString exp
 : "((1 + 2) + (3 + 4))"
 
-A more fundamental observer compiles the expression language into a
-simplified version of LLVM assembly: since our language includes no
-control flow the entire language can be compiled into an LLVM basic
-block without additional labels or jumps:
+Since we're interested in producing an executable we are interested in
+a third interpretation: compiling the expression language into LLVM
+assembly. since our language includes no control flow the entire
+language can be compiled into an LLVM basic block without additional
+labels or jumps:
 
 : compile :: Exp -> String
 
@@ -104,8 +105,8 @@ order to make test cases we need to indicate how to generate random
 terms of =Exp= by defining an =Arbitrary= instance for =Exp= and a
 generator =arbitrary :: Gen Exp= that generates expression.
 
-Defining =arbitrary= in the ‘obvious’ way means the generator is
-defined recursively has an issue:
+A naive definition of =arbitrary= way means the generator is defined
+recursively has an issue:
 
 : instance Arbitrary Exp where
 :   arbitrary :: Gen Exp
@@ -128,12 +129,12 @@ Using this we can cut the size parameter in two in the recursive cases:
 :   arbitrary = sized sizedExpr where
 : 
 :     sizedExpr :: Int → Gen Exp
-:     sizedExpr 0 = I <$> arbitrary
+:     sizedExpr 0 = liftA I arbitrary
 :     sizedExpr n = let 
 :       subtree = sizedExpr (n `div` 2)
 : 
-:       in oneof [ I   <$> arbitrary,
-:                  Add <$> subtree <*> subtree ]
+:       in oneof [ liftA  I    arbitrary,
+:                  liftA2 Add subtree subtree ]
 
 A desirable property of the compiler is that its output agree with the
 evaluation function, using it as a /test oracle/ which for our

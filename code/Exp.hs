@@ -6,32 +6,24 @@ import Data.Functor.Identity
 import Data.Bits
 import GHC.Generics hiding (from, to)
 
+import Bound
+  
 import Types
 
 -- https://hackage.haskell.org/package/feldspar-language-0.7/docs/src/Feldspar-Core-Types.html
 
-data Segð = Tala Int | Satt | Ósatt | Plús Segð Segð deriving Show
+-- data Name 
+--   = Index Int
+--   | VarName String
+--   deriving Show
 
-data Skilagildi = I Int | B Bool 
-
-instance Show Skilagildi where
-  show ∷ Skilagildi → String
-  show (I int)   = "Halló, ég er tala: " ++ show int
-  show (B True)  = "Halló, ég er sannur"
-  show (B False) = "Halló, ég er ósannur"
-
-túlka ∷ Segð → Skilagildi
-túlka (Tala i)   = I i
-túlka Satt       = B True
-túlka Ósatt      = B False
-túlka (Plús a b) = undefined
+type Name = Int
 
 data Exp τ where
   LitI ∷ Int  → Exp Int
   LitB ∷ Bool → Exp Bool
 
   If  ∷ Exp Bool → Exp τ → Exp τ → Exp τ
-  Var ∷ String → Exp τ 
 
   Fn₁ ∷ String 
       → TypeRep (a → b)
@@ -43,28 +35,85 @@ data Exp τ where
       → (a → b → c) 
       → (Exp a → Exp b → Exp c)
 
-  -- | Lam String Exp
-  While ∷ (Exp s → Exp Bool) → (Exp s → Exp s) → Exp s → Exp s
+  -- While ∷ (Exp s → Exp Bool) → (Exp s → Exp s) → Exp s → Exp s
+  While ∷ Name → Exp Bool → Exp s → Exp s → Exp s
 
-  Arr   ∷ Type a ⇒ Exp Int → (Exp Int → Exp a) → Exp [a]
+  -- Arr   ∷ Type a ⇒ Exp Int → (Exp Int → Exp a) → Exp [a]
+  Arr   ∷ Exp Int → Name → Exp a → Exp [a]
   Len   ∷ Type a ⇒ Exp [a] → Exp Int
   ArrIx ∷ Type a ⇒ Exp [a] → Exp Int → Exp a
 
-  Pair  ∷ Exp Int → Exp Int → Exp (Int, Int)
+  Pair  ∷ (Type a, Type b) ⇒ Exp a → Exp b → Exp (a, b)
+  Fst   ∷ Exp (a, b) → Exp a
+  Snd   ∷ Exp (a, b) → Exp b
+
+  Var ∷ Name → Exp τ
+  Lam ∷ Name → Exp b → Exp (a → b)
+  App ∷ Exp (a → b) → Exp a → Exp b
+
+while ∷ (Exp s → Exp Bool) → (Exp s → Exp s) → Exp s → Exp s
+while cond loop init = While n condBody loopBody init where
+  n        = 1 + max (maxLam condBody) (maxLam loopBody)
+  condBody = cond (Var n)
+  loopBody = loop (Var n)
+
+arr ∷ Exp Int → (Exp Int → Exp a) → Exp [a]
+arr len ixf = Arr len n body where
+  n    = 1 + maxLam body
+  body = ixf (Var n)
+
+λ ∷ (Exp a → Exp b) → Exp (a → b)
+λ f = Lam n body where
+  n    = 1 + maxLam body
+  body = f (Var n)
+
+λ₂ ∷ (Exp a → Exp b → Exp c) → Exp (a → b → c)
+λ₂ f = λ $ \x → 
+       λ $ \y → f x y 
+
+λ₃ ∷ (Exp a → Exp b → Exp c → Exp d) → Exp (a → b → c → d)
+λ₃ f = λ $ \x → 
+       λ $ \y → 
+       λ $ \z → f x y z
+
+(·) = App
+
+maxLam ∷ Exp a → Name
+maxLam = \case
+  Var{}         → 0
+  LitI{}        → 0
+  App a b       → maxLam a `max` maxLam b
+  Fn₁ _ _ _ a   → maxLam a
+  Fn₂ _ _ _ a b → maxLam a `max` maxLam b
+
+  -- Binding constructs
+  Lam   n _     → n
+  While n _ _ _ → n
+
+  a             → error $ "maxLam: " ++ show a
 
 instance Show (Exp a) where
   show ∷ Exp a → String
   show = \case
     LitI i          → show i
-    LitB b          → show b
+    LitB False      → "fls"
+    LitB True       → "tru"
     If c t e        → printf "(if %s %s %s)" (show c) (show t) (show e)
-    Var str         → str
     Fn₁ str _   _ x → printf "%s(%s)" str (show x)
     Fn₂ str _ _ x y → printf "(%s %s %s)" (show x) str (show y)
-    Arr l ixf       → printf "(%s for i in 0…%s)" (show (ixf (Var "i"))) (show l)
+    Arr l n ixf     → printf "(%s for v%s in 0…%s)" (show ixf) (show n) (show l)
     Len x           → printf "len(%s)" (show x)
     ArrIx arr i     → printf "%s[%s]" (show arr) (show i)
     Pair x y        → printf "⟨%s, %s⟩" (show x) (show y)
+    Fst pair        → printf "fst(%s)" (show pair)
+    Snd pair        → printf "snd(%s)" (show pair)
+
+    Var n           → "v" ++ show n
+    App a b         → printf "%s · %s" (show a) (show b)
+    Lam n body      → printf "(v%d ↦ %s)" n (show body)
+    
+    While n c b i   → printf "while [v%d = %s] (%s) { %s }" n (show i) (show c) (show b)
+    _               → undefined 
 
 instance Num (Exp Int) where
   (+) ∷ Exp Int → Exp Int → Exp Int
@@ -121,13 +170,23 @@ pattern a      :≤: b      ← Fn₂ "≤" (TInt :→: TInt :→: TBool) _    a
         LitI a :≤: LitI b = LitB (a <= b)
         a      :≤: b      = Fn₂ "≤" (TInt :→: TInt :→: TBool) (<=) a b
 
-pattern Fst ∷ (a → b) ~ ((Int, Int) → Int) ⇒ Exp a → Exp b
-pattern Fst x ← Fn₁ "fst" (TPair TInt TInt :→: TInt) _   x where
-        Fst x = Fn₁ "fst" (TPair TInt TInt :→: TInt) fst x where
+pattern (:<:) ∷ (a → b → c) ~ (Int → Int → Bool) ⇒ Exp a → Exp b → Exp c
+pattern a      :<: b      ← Fn₂ "<" (TInt :→: TInt :→: TBool) _    a b where
+        LitI a :<: LitI b = LitB (a < b)
+        a      :<: b      = Fn₂ "<" (TInt :→: TInt :→: TBool) (<) a b
 
-pattern Snd ∷ (a → b) ~ ((Int, Int) → Int) ⇒ Exp a → Exp b
-pattern Snd x ← Fn₁ "snd" (TPair TInt TInt :→: TInt) _   x where
-        Snd x = Fn₁ "snd" (TPair TInt TInt :→: TInt) snd x where
+pattern (:=:) ∷ (a → b → c) ~ (Int → Int → Bool) ⇒ Exp a → Exp b → Exp c
+pattern a      :=: b      ← Fn₂ "=" (TInt :→: TInt :→: TBool) _    a b where
+        LitI a :=: LitI b = LitB (a == b)
+        a      :=: b      = Fn₂ "=" (TInt :→: TInt :→: TBool) (==) a b
+
+-- pattern Fst ∷ (a → b) ~ ((Int, Int) → Int) ⇒ Exp a → Exp b
+-- pattern Fst x ← Fn₁ "fst" (TPair TInt TInt :→: TInt) _   x where
+--         Fst x = Fn₁ "fst" (TPair TInt TInt :→: TInt) fst x where
+
+-- pattern Snd ∷ (a → b) ~ ((Int, Int) → Int) ⇒ Exp a → Exp b
+-- pattern Snd x ← Fn₁ "snd" (TPair TInt TInt :→: TInt) _   x where
+--         Snd x = Fn₁ "snd" (TPair TInt TInt :→: TInt) snd x where
 
 pattern Tru ∷ b ~ Bool ⇒ Exp b
 pattern Tru = LitB True
@@ -165,7 +224,12 @@ getTy = \case
   ArrIx arr _     → case getTy arr of
     TArr a        → a
   Pair a b        → TPair (getTy a) (getTy b)
-  Arr _ ixf       → typeRep
+  Fst a           → case getTy a of
+    TPair a b → a
+  Snd a           → case getTy a of
+    TPair a b → b
+  While _ _ a b → getTy a
+  -- Arr _ ixf       → typeRep
 
 -- comp' ∷ Applicative f ⇒ (Exp → f Exp) → (Exp → f Exp)
 -- comp' f = \case
@@ -184,4 +248,25 @@ getTy = \case
 -- appVar (Var x) = Var ("_" ++ x)
 -- appVar e       = compI appVar e
 
+eval ∷ Exp a → a
+eval = \case
+  LitI a   → a
+  LitB b   → b
+  Not b    → not (eval b)
+  Pair a b → (eval a, eval b)
+  Fst a    → fst (eval a)
+  Snd a    → snd (eval a)
+  Add a b  → eval a + eval b
+  a :≤: b  → eval a <= eval b
+  And a b  → eval a && eval b
+  Mul a b  → eval a * eval b
+  Xor a b  → xor (eval a) (eval b)
+  If c a b 
+    | eval c    → eval a
+    | otherwise → eval b
+  -- Arr len ixf → let
+  --   ℓ  = eval len
+  --   is = [0..ℓ-1]
+  --   in [ eval (ixf (LitI x)) | x ← is ]
+  a → error ("ERROR: " ++ show a)
 
