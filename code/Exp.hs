@@ -5,19 +5,18 @@ import Control.Applicative
 import Data.Functor.Identity
 import Data.Bits
 import GHC.Generics hiding (from, to)
+import Numeric.Natural
 
+import Data.Bifunctor
+import Data.Bifoldable
+
+import Control.Lens
 import Bound
   
 import Types
 
 -- https://hackage.haskell.org/package/feldspar-language-0.7/docs/src/Feldspar-Core-Types.html
 
--- data Name 
---   = Index Int
---   | VarName String
---   deriving Show
-
-type Name = Int
 
 data Exp τ where
   LitI ∷ Int  → Exp Int
@@ -36,10 +35,10 @@ data Exp τ where
       → (Exp a → Exp b → Exp c)
 
   -- While ∷ (Exp s → Exp Bool) → (Exp s → Exp s) → Exp s → Exp s
-  While ∷ Name → Exp Bool → Exp s → Exp s → Exp s
+  While ∷ VarName → Exp Bool → Exp s → Exp s → Exp s
 
   -- Arr   ∷ Type a ⇒ Exp Int → (Exp Int → Exp a) → Exp [a]
-  Arr   ∷ Exp Int → Name → Exp a → Exp [a]
+  Arr   ∷ Type a ⇒ Exp Int → VarName → Exp a → Exp [a]
   Len   ∷ Type a ⇒ Exp [a] → Exp Int
   ArrIx ∷ Type a ⇒ Exp [a] → Exp Int → Exp a
 
@@ -47,38 +46,22 @@ data Exp τ where
   Fst   ∷ Exp (a, b) → Exp a
   Snd   ∷ Exp (a, b) → Exp b
 
-  Var ∷ Name → Exp τ
-  Lam ∷ Name → Exp b → Exp (a → b)
+  Var ∷ VarName → Exp τ
+  Lam ∷ VarName → Exp b → Exp (a → b)
   App ∷ Exp (a → b) → Exp a → Exp b
 
 while ∷ (Exp s → Exp Bool) → (Exp s → Exp s) → Exp s → Exp s
-while cond loop init = While n condBody loopBody init where
+while cond loop init = While (Lambda n) condBody loopBody init where
   n        = 1 + max (maxLam condBody) (maxLam loopBody)
-  condBody = cond (Var n)
-  loopBody = loop (Var n)
+  condBody = cond (Var (Lambda n))
+  loopBody = loop (Var (Lambda n))
 
-arr ∷ Exp Int → (Exp Int → Exp a) → Exp [a]
-arr len ixf = Arr len n body where
+arr ∷ Type a ⇒ Exp Int → (Exp Int → Exp a) → Exp [a]
+arr len ixf = Arr len (Lambda n) body where
   n    = 1 + maxLam body
-  body = ixf (Var n)
+  body = ixf (Var (Lambda n))
 
-λ ∷ (Exp a → Exp b) → Exp (a → b)
-λ f = Lam n body where
-  n    = 1 + maxLam body
-  body = f (Var n)
-
-λ₂ ∷ (Exp a → Exp b → Exp c) → Exp (a → b → c)
-λ₂ f = λ $ \x → 
-       λ $ \y → f x y 
-
-λ₃ ∷ (Exp a → Exp b → Exp c → Exp d) → Exp (a → b → c → d)
-λ₃ f = λ $ \x → 
-       λ $ \y → 
-       λ $ \z → f x y z
-
-(·) = App
-
-maxLam ∷ Exp a → Name
+maxLam ∷ Exp a → Natural
 maxLam = \case
   Var{}         → 0
   LitI{}        → 0
@@ -87,10 +70,14 @@ maxLam = \case
   Fn₂ _ _ _ a b → maxLam a `max` maxLam b
 
   -- Binding constructs
-  Lam   n _     → n
-  While n _ _ _ → n
+  Lam   n _     → view var n
+  While n _ _ _ → view var n
 
-  a             → error $ "maxLam: " ++ show a
+  Pair a b      → maxLam a `max` maxLam b
+  Fst a         → maxLam a
+  Snd a         → maxLam a
+
+  a             → error ("maxLam: " ++ show a)
 
 instance Show (Exp a) where
   show ∷ Exp a → String
@@ -108,11 +95,11 @@ instance Show (Exp a) where
     Fst pair        → printf "fst(%s)" (show pair)
     Snd pair        → printf "snd(%s)" (show pair)
 
-    Var n           → "v" ++ show n
+    Var n           → show n
     App a b         → printf "%s · %s" (show a) (show b)
-    Lam n body      → printf "(v%d ↦ %s)" n (show body)
+    Lam n body      → printf "(%s ↦ %s)" (show n) (show body)
     
-    While n c b i   → printf "while [v%d = %s] (%s) { %s }" n (show i) (show c) (show b)
+    While n c b i   → printf "while [%s = %s] (%s) { %s }" (show n) (show i) (show c) (show b)
     _               → undefined 
 
 instance Num (Exp Int) where
@@ -135,29 +122,29 @@ instance Num (Exp Int) where
 -- See trac issue #10405.
 pattern Add ∷ (a → b → c) ~ (Int → Int → Int) ⇒ Exp a → Exp b → Exp c
 pattern Add a        b        ← Fn₂ "+" Ints₂ _   a b where
-        Add (LitI a) (LitI b) = LitI (a + b)
+        -- Add (LitI a) (LitI b) = LitI (a + b)
         Add a        b        = Fn₂ "+" Ints₂ (+) a b
 
 pattern Mul ∷ (a → b → c) ~ (Int → Int → Int) ⇒ Exp a → Exp b → Exp c
 pattern Mul a b               ← Fn₂ "*" Ints₂ _   a b where
-        Mul (LitI a) (LitI b) = LitI (a * b)
+        -- Mul (LitI a) (LitI b) = LitI (a * b)
         Mul a b               = Fn₂ "*" Ints₂ (*) a b
 
 pattern Negate ∷ (a → b) ~ (Int → Int) ⇒ Exp a → Exp b
 pattern Negate a        ← Fn₁ "negate" Ints₁ _      a where
-        Negate (LitI b) = LitI (negate b)
+        -- Negate (LitI b) = LitI (negate b)
         Negate a        = Fn₁ "negate" Ints₁ negate a
 
 pattern Xor ∷ (a → b → c) ~ (Int → Int → Int) ⇒ Exp a → Exp b → Exp c
 pattern Xor a        b        ← Fn₂ "xor" Ints₂ _   a b where
-        Xor (LitI a) (LitI b) = LitI (xor a b)
+        -- Xor (LitI a) (LitI b) = LitI (xor a b)
         Xor a        b        = Fn₂ "xor" Ints₂ xor a b
 
 pattern Not ∷ (a → b) ~ (Bool → Bool) ⇒ Exp a → Exp b
 pattern Not b ← Fn₁ "not" Bools₁ _   b where
-        Not Tru     = Fls
-        Not Fls     = Tru
-        Not (Not a) = a
+        -- Not Tru     = Fls
+        -- Not Fls     = Tru
+        -- Not (Not a) = a
         Not b       = Fn₁ "not" Bools₁ not b
 
 pattern And ∷ (a → b → c) ~ (Bool → Bool → Bool) ⇒ Exp a → Exp b → Exp c
@@ -198,16 +185,11 @@ pattern Fls = LitB False
 a ⊔ b = If (a :≤: b) a b
 
 swap ∷ Exp (Int, Int) → Exp (Int, Int)
-swap xs = Pair (Snd xs) (Fst xs)
+swap (Pair a b) = Pair b a
+swap xs         = Pair (Snd xs) (Fst xs)
 
--- --     While a b i    → printf "(st = %s;\n" (show i)
--- --                   ++ printf "  while (%s) {\n" (show (a (Var "st")))
--- --                   ++ printf "    st = %s;\n" (show (b (Var "st")))
--- --                   ++ printf "})\n"
--- --     Lam{}          → error "LAM"
-    
-(⊕) = Xor
-(∧) = And
+-- (⊕) = Xor
+-- (∧) = And
 
 showTy ∷ Exp a → String
 showTy = showTypeRep . getTy
@@ -229,7 +211,21 @@ getTy = \case
   Snd a           → case getTy a of
     TPair a b → b
   While _ _ a b → getTy a
-  -- Arr _ ixf       → typeRep
+  Arr _ _ ixf       → typeRep
+
+-- renameVar ∷ Name → Name → 
+
+
+-- lam :: (Exp -> Exp) -> Exp
+-- lam f = Lam n body
+--   where
+--     body = f (Var n)
+--     n    = succ (maxLam body)
+
+-- maxLam :: Exp -> Name
+-- maxLam (Var _)   = dummy
+-- maxLam (App a b) = max (maxLam a) (maxLam b)
+-- maxLam (Lam n _) = n  -- stop search
 
 -- comp' ∷ Applicative f ⇒ (Exp → f Exp) → (Exp → f Exp)
 -- comp' f = \case
@@ -269,4 +265,22 @@ eval = \case
   --   is = [0..ℓ-1]
   --   in [ eval (ixf (LitI x)) | x ← is ]
   a → error ("ERROR: " ++ show a)
+
+{-
+λ ∷ (Exp a → Exp b) → Exp (a → b)
+λ f = Lam (Lambda n) body where
+  n    = 1 + maxLam body
+  body = f (Var (Lambda n))
+
+λ₂ ∷ (Exp a → Exp b → Exp c) → Exp (a → b → c)
+λ₂ f = λ $ \x → 
+       λ $ \y → f x y 
+
+λ₃ ∷ (Exp a → Exp b → Exp c → Exp d) → Exp (a → b → c → d)
+λ₃ f = λ $ \x → 
+       λ $ \y → 
+       λ $ \z → f x y z
+
+(·) = App
+-}
 

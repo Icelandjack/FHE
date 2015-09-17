@@ -1,10 +1,11 @@
-{-# LANGUAGE OverloadedStrings #-}
+-- {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE UnicodeSyntax #-}
 
 module Codegen where
 
 import Prelude
 import qualified Data.Map as M
+import qualified Data.Set as S
 import Control.Monad.State
 import Control.Monad.Writer
 import Control.Monad.Reader {- rm ltr -}
@@ -14,10 +15,12 @@ import Text.Printf
 import Data.Foldable
 import Data.Traversable
 import Control.Lens
+import Numeric.Natural
 
 import Data.Char
 
 import Util
+import Variable
 
 type Instruction = String
 
@@ -29,21 +32,22 @@ data Reg
 data BasicBlock = MkBB {
   _instructions ∷ [Instruction],
   _terminator   ∷ String,
-  _index'       ∷ Int
+  _index'       ∷ Natural
 } deriving Show
 
 data CodegenState = MkCodegen {
-  _currentBlock ∷ String,
-  _blocks       ∷ M.Map String BasicBlock,
-  _blockCount   ∷ Int, 
-  _nameUsage    ∷ M.Map String Int,
-  _count        ∷ Int
+  _codegenStateCurrentBlock ∷ String,
+  _codegenStateBlocks       ∷ M.Map String BasicBlock,
+  _codegenStateBlockCount   ∷ Natural, 
+  _codegenStateCount        ∷ Natural
 } deriving Show
+-- _codegenStateNameUsage    ∷ M.Map String Natural,
 
 makeClassy       ''BasicBlock
 makeClassyPrisms ''BasicBlock
 makeClassy       ''CodegenState
 makeClassyPrisms ''CodegenState
+makeFields       ''CodegenState
 
 type Codegen = WriterT (Epilogue Instruction) (State CodegenState)
 
@@ -51,25 +55,49 @@ newtype Epilogue a
   = Epilogue [a] 
   deriving (Show, Monoid, Functor, Foldable, Traversable)
 
--- | Get a unique string.
--- If it exists in name supply then we add stuff to it.
--- 
--- 
-uniqueName ∷ String → Codegen String 
+-- | Get a unique string. After several iterations I'm falling back on
+-- appending a fresh number as naively as possible.
+
+uniqueName ∷ String → Codegen String
 uniqueName name = do
-  names ← gets _nameUsage
+  freshVar ← fresh
 
-  case M.lookup name names of
-    Nothing → name <$ modify (\s→s{_nameUsage=M.insert name 1 names}) 
-    Just i  → case M.lookup (name ++ show i) names of
-      Nothing → name ++ show i <$ modify (\s→s{_nameUsage=M.insert (name ++ show i) 1 names}) 
-      Just j  → uniqueName (name ++ "e")
+  let var = Variable name freshVar
 
-emptyBlock ∷ Int → String → BasicBlock 
+  
+
+  undefined 
+  -- printf "%s_%d" name <$> fresh
+
+-- uniqueName ∷ String → Codegen String 
+-- uniqueName "v"  = uniqueName "vv"
+-- uniqueName name = do
+--   let numberOfUses ∷ Lens' CodegenState (Maybe Natural)
+--       numberOfUses = nameUsage.at name
+
+--   lookupName ← use numberOfUses
+
+--   case lookupName of
+--     Nothing → do
+--       numberOfUses ?= 1
+--       pure (name ++ "1")
+
+--     Just x  → do
+--       nameUsage.ix name .= x+1
+--       pure (name ++ show (x+1))
+
+emptyBlock ∷ Natural → String → BasicBlock 
 emptyBlock index name = MkBB [] (error (name ++ ": NEEDS A TERMINATOR")) index
 
 emptyState ∷ CodegenState
-emptyState = MkCodegen "entry" M.empty 0 M.empty 0 
+-- emptyState = MkCodegen (error "no-initial") M.empty 0 {- M.empty -} 0
+emptyState = MkCodegen "no-initial" M.empty 0 {- M.empty -} 0
+  -- "entry"
+  -- (M.singleton "entry" (emptyBlock 0 "entry"))
+  -- 1
+  -- M.empty
+  -- (S.singleton "entry")
+  -- 0
 
 -- TODO: vars ∶ [(String, Operand)] to { symtab = vars }
 runCodegen ∷ ∀a. Codegen a → (a, CodegenState)
@@ -82,97 +110,129 @@ runCodegen codegen = runState noEpilogue emptyState
     noEpilogue = evalWriterT codegen
 
 entry ∷ Codegen String
-entry = gets _currentBlock
-
--- addBlock' ∷ String → Codegen' String
--- addBlock' str = do
---   blockCount' += 1
---   undefined 
+entry = use currentBlock
 
 addBlock ∷ String → Codegen String
 addBlock str = do
-  bls        ← gets _blocks
-  blockCnt   ← gets _blockCount
+  blockCnt   ← use blockCount
   blockName  ← uniqueName str
-  
-  modify (\state → state {
-    _blocks     = M.insert blockName (emptyBlock blockCnt blockName) bls,
-    _blockCount = blockCnt + 1
-  })
-  
+
+  let newBlock ∷ BasicBlock
+      newBlock = emptyBlock blockCnt blockName
+
+  blocks.at blockName ?= newBlock
+  blockCount          += 1
+
   return blockName
 
-setBlock ∷ String → Codegen String
+setBlock ∷ String → Codegen ()
 setBlock newBlock = do
-  modify (\state → state { _currentBlock = newBlock })
-  return newBlock
+  currentBlock .= newBlock
 
 getBlock ∷ Codegen String
-getBlock = gets _currentBlock
+getBlock = use currentBlock
 
 modifyBlock ∷ BasicBlock → Codegen ()
 modifyBlock new = do
-  active ← gets _currentBlock
-  modify $ \s → s { _blocks = M.insert active new (_blocks s) }
+  active ← use currentBlock
+  blocks.at active ?= new
 
-fresh ∷ Codegen Int
-fresh = do
-  i ← gets _count
-  modify (\s → s { _count = i + 1 })
-  return (i + 1)
+fresh ∷ Codegen Natural
+fresh = 
+  count <+= 1
+
+-- current ∷ Codegen BasicBlock
+-- current = do
+--   c ← use currentBlock
+--   uses blocks (^?! ix c)
 
 current ∷ Codegen BasicBlock
 current = do
-  c ← gets _currentBlock
-  blks ← gets _blocks
+  c    ← use currentBlock
+  blks ← use blocks
   case M.lookup c blks of
     Just x  → return x
     Nothing → error $ "No such block: " ++ show c
 
+currentLens ∷ Lens' CodegenState BasicBlock
+currentLens = singular current'
+
+current' ∷ Traversal' CodegenState BasicBlock
+current'
+  f
+  (MkCodegen current blocks blockCount cnt) 
+  = 
+  MkCodegen 
+  <$>
+  pure current
+  <*>
+  traverseOf (ix current) f blocks
+  <*>
+  pure blockCount
+  <*>
+  pure cnt
+
 -- global = @
 -- local  = %
+-- namedInstr ∷ String → Instruction → Codegen String
+-- namedInstr var newInstructions = do
+--   ref ← fresh
+--   blk ← current
+
+--   let instrs   = _instructions blk
+--       localVar = "%" ++ var ++ show ref
+
+--   modifyBlock (blk { 
+--     _instructions = instrs ++ [localVar ++ " = " ++ newInstructions] 
+--   })
+  
+--   return localVar
 namedInstr ∷ String → Instruction → Codegen String
 namedInstr var newInstructions = do
-  ref ← fresh
-  blk ← current
+  ref    ← fresh
 
-  let instrs   = _instructions blk
-      localVar = "%" ++ var ++ show ref
+  let localVar = "%" ++ var ++ show ref
 
-  modifyBlock (blk { 
-    _instructions = instrs ++ [localVar ++ " = " ++ newInstructions] 
-  })
+      instr    ∷ String
+      instr    = printf "%s = %s" localVar newInstructions
+
+  currentLens.instructions <>= [instr]
   
   return localVar
 
-addInstr ∷ Int → String → Codegen String
+addInstr ∷ Natural → String → Codegen String
 addInstr (printf "%%var%d" → var) instr = do
-  blk ← current
 
-  modifyBlock (blk { 
-    _instructions = _instructions blk ++ [printf "%s = %s" var instr]
-  })
-
+  currentLens.instructions <>= [printf "%s = %s" var instr]
   return var
+-- addInstr ∷ Natural → String → Codegen String
+-- addInstr (printf "%%var%d" → var) instr = do
+--   blk ← current
+
+--   modifyBlock (blk { 
+--     _instructions = _instructions blk ++ [printf "%s = %s" var instr]
+--   })
+
+--   return var
 
 instr ∷ Instruction → Codegen String
 instr = namedInstr "u"
 
 instr_ ∷ Instruction → Codegen ()
-instr_ newInstructions = do
-  blk ← current
+instr_ newInstructions = 
+  currentLens.instructions <>= [newInstructions]
 
-  let instrs = _instructions blk
-
-  modifyBlock (blk { 
-    _instructions = instrs ++ [newInstructions] 
-  })
+-- instr_ ∷ Instruction → Codegen ()
+-- instr_ newInstructions = do
+--   blk ← current
+--   let instrs = _instructions blk
+--   modifyBlock (blk { 
+--     _instructions = instrs ++ [newInstructions] 
+--   })
 
 terminate ∷ String → Codegen String
 terminate newTerm = do
-  block ← current
-  modifyBlock (block { _terminator = newTerm })
-  return newTerm
+  currentLens.terminator <.= newTerm
 
 printArr ∷ [String]
 printArr = [

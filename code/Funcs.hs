@@ -34,7 +34,8 @@ import GHC.Read
 import Test.QuickCheck.Monadic hiding (run)
 import qualified Test.QuickCheck.Monadic as M
 import Control.Lens.Internal.Setter
-import Control.Lens.TH
+import Data.Data
+import Data.Typeable
 
 import Control.Lens hiding (index, (<.), Indexed)
 
@@ -88,7 +89,12 @@ compile (e₁ :≤: e₂) = do
   reg₂ ← compile e₂
 
   reg₁ ≤ reg₂
-  -- "conv" `namedInstr` printf "zext i1 %s to i64" bit
+
+compile (e₁ :<: e₂) = do
+  reg₁ ← compile e₁
+  reg₂ ← compile e₂
+
+  reg₁ <. reg₂
 
 compile (Var n)    = do
   return ("%var" ++ show n)
@@ -153,7 +159,7 @@ compile (Fst pair) = do
 compile (Snd pair) = do
   π(1) =<< compile pair
 
-compile (While n condTest body init) = mdo
+compile (While (Lambda n) condTest body init) = mdo
   entry       ← getBlock
   while_test  ← addBlock "while.test"
   while_body  ← addBlock "while.body"
@@ -167,6 +173,9 @@ compile (While n condTest body init) = mdo
   val_1 ← φ "i32" (init_val, entry)
                   (val_2,    while_body)
 
+  -- This is an ugly hack, need to rename variable to agree with free
+  -- variable in "condTest" and "body", should rather rename the
+  -- variable (TODO when using bounded on a lower-level IR)
   variable ← addInstr n ("add i32 0, " ++ val_1)
 
   keepGoing ← compile condTest
@@ -181,44 +190,46 @@ compile (While n condTest body init) = mdo
   setBlock while_post
   return variable
 
-compile (Arr len n ixf) = mdo
-  entry   ← getBlock
-  loop_1  ← addBlock "arr.loop1"
-  loop_2  ← addBlock "arr.loop2"
-  post    ← addBlock "arr.post"
+-- compile (Arr len n ixf) = mdo
+--   entry   ← getBlock
+--   loop_1  ← addBlock "arr.loop1"
+--   loop_2  ← addBlock "arr.loop2"
+--   post    ← addBlock "arr.post"
 
-  arrLength ← compile len
-  arrMem    ← mallocStr arrLength
-  buffer    ← getBuffer("i32") arrMem
+--   arrLength ← compile len
+--   arrMem    ← mallocStr arrLength
+--   buffer    ← getBuffer("i32") arrMem
 
-  jmp loop_1
+--   jmp loop_1
 
-  -- | arr.loop
-  -- Increment from [0…len) 
-  setBlock loop_1
-  i₀  ← φ "i32" ("0", entry)
-                (i₁ , loop_2')
-  i₁  ← incr i₀
+--   -- | arr.loop
+--   -- Increment from [0…len) 
+--   setBlock loop_1
+--   i₀  ← φ "i32" ("0", entry)
+--                 (i₁ , loop_2')
+--   i₁  ← incr i₀
 
-  keepGoing ← i₀ <. arrLength
-  br keepGoing loop_2 post
+--   variable ← addInstr n ("add i32 0, " ++ i₀)
 
-  setBlock loop_2 
+--   keepGoing ← i₀ <. arrLength
+--   br keepGoing loop_2 post
 
-  ptr ← "ptr" `namedInstr` printf "getelementptr i32* %s, i32 %s" buffer i₀
+--   setBlock loop_2 
 
-  value ← undefined  --compile (ixf (Var (tail i₀)))
-  loop_2' ← getBlock
+--   ptr ← "ptr" `namedInstr` printf "getelementptr i32* %s, i32 %s" buffer i₀
 
-  ptr ≔ value
-  jmp loop_1
+--   value ← compile ixf
+--   loop_2' ← getBlock
 
-  setBlock post 
+--   ptr ≔ value
+--   jmp loop_1
 
-  -- | arr.post
-  setBlock post
+--   setBlock post 
 
-  return arrMem
+--   -- | arr.post
+--   setBlock post
+
+--   return arrMem
 
 -- compile (Len (Arr len _)) = do
 --   compile len
@@ -239,8 +250,8 @@ compile (ArrIx arr index) = do
 compile (Lam n body) = 
   undefined 
 
-foobarDef ∷ (([String], t, String), CodegenState) → [Integer] → Writer [String] ()
-foobarDef ((args, reg, returnType), code) xs = do
+foobarDef ∷ (([String], {- t, -} String), CodegenState) → [Integer] → Writer [String] ()
+foobarDef ((args, {- reg, -} returnType), code) xs = do
   tell [printf "define %s @foobar(%s) {" returnType args']
   foobarBody sortedCode
   tell ["}"]
@@ -255,7 +266,7 @@ foobarDef ((args, reg, returnType), code) xs = do
       tell ["  " ++ _terminator]
 
   sortedCode ∷ [(String, BasicBlock)]
-  sortedCode = M.toList (_blocks code)
+  sortedCode = M.toList (_codegenStateBlocks code)
     & sortOn (_index' . snd)
 
   comma = intercalate ", "
@@ -266,8 +277,8 @@ foobarDef ((args, reg, returnType), code) xs = do
   args' = comma $ [ "%Arr** %out" | isArray    ] 
                ++ [ "i32 %" ++ arg   | arg ← args ]
 
-mainDef ∷ (([String], t, String), CodegenState) → [Integer] → Writer [String] ()
-mainDef ((args, reg, returnType), code) xs = do
+mainDef ∷ (([String], {-t, -} String), CodegenState) → [Integer] → Writer [String] ()
+mainDef ((args, {-reg, -}returnType), code) xs = do
   let isArray ∷ Bool
       isArray = returnType == "%Arr*"
 
@@ -297,40 +308,12 @@ mainDef ((args, reg, returnType), code) xs = do
 -- comp ∶ (Exp a → Exp b)         → Codegen String
 -- comp ∶ (Exp a → Exp b → Exp c) → Codegen String
 
-blah ∷ (Exp a → Exp b) → ([Name], Exp b)
-blah f = ([n], body) where
-  n    = 1 + maxLam body
-  body = f (Var n)
-
-blah2 ∷ (Exp a → Exp b → Exp c) → ([Name], Exp c)
-blah2 f = ([n, m], body) where
-  n    = 1 + maxLam body
-  m    = 1 + n
-  body = f (Var n) (Var m)
-
-a ∷ Exp a → ([Name], Exp a)
-a exp = ([], exp)
-
-b ∷ (Exp a → Exp b) → ([Name], Exp b)
-b exp = ([n], body) where
-  n    = 1 + maxLam body
-  body = exp (Var n)
-
-c ∷ (Exp a → Exp b → Exp c) → ([Name], Exp c)
-c exp = ([n, m], body) where
-  n    = 1 + maxLam body
-  m    = 1 + n
-  body = exp (Var n) (Var m)
-
-d ∷ (Exp a → Exp b → Exp c → Exp d) → ([Name], Exp d)
-d exp = ([n, m, i], body) where
-  n    = 1 + maxLam body
-  m    = 1 + n
-  i    = 1 + m
-  body = exp (Var n) (Var m) (Var i)
-
 comp ∷ Exp a → Codegen ([String], String, Maybe String)
 comp exp = do
+  let highestBinder = maxLam exp
+
+  -- nameUsage.ix "v" .= highestBinder
+
   compiled ← compile exp
   return ([], compiled, Just (showTy exp))
 
@@ -352,7 +335,7 @@ comp exp = do
 --     return (arg : args, code, Nothing)
 
 -- compileExp ∷ Comp a ⇒ a → (([String], String, String), CodegenState)
-compileExp ∷ Exp a → (([String], String, String), CodegenState)
+compileExp ∷ Exp a → (([String], {-String, -}String), CodegenState)
 compileExp exp = runCodegen $ do
   -- Create the entry basic block
   prologue
@@ -362,13 +345,16 @@ compileExp exp = runCodegen $ do
   when (returnType == "%Arr*")$ do
     instr_ (printf "store %%Arr* %s, %%Arr** %%out" reg)
 
-  reg ← terminate (printf "ret %s %s" returnType reg)
+  {-reg ← -}
+  terminate (printf "ret %s %s" returnType reg)
 
-  return (args, reg, returnType)
+  return (args, {- reg, -} returnType)
 
   where
     prologue ∷ Codegen ()
-    prologue = void (addBlock "entry")
+    prologue = do
+      name ← addBlock "entry"
+      setBlock name
 
     -- Free pointers in epilogue
     free'd ∷ Codegen a → Codegen a
@@ -381,8 +367,12 @@ run = (getOutput ?? []) >=> putStrLn
 runI ∷ Exp Int → IO ()
 runI = run
 
+-- lined ∷ Traversal' String String
+-- _last ∷ Traversal' String Char
+-- 
+
 runRead ∷ Read a ⇒ Exp a → IO a
-runRead exp = read . last . lines <$> getOutput exp []
+runRead exp = read.last.lines <$> getOutput exp []
 
 -- Code
 code ∷ Exp a → IO ()
@@ -434,11 +424,18 @@ getOutput exp xs = do
     Stdout output → return output
     _             → return (show foo)
 
+-- allvars ∷ Traversal' (Exp a) Name
+-- allvars f = \case
+--   Var n  → Var <$> f n
+--   LitI i → pure $  LitI i
+--   LitB b → pure $  LitB b
+--   While n a b c → While <$> f n    <*> allvars f a <*> allvars f b <*> allvars f c
+--   Fn₂ a b c d e → Fn₂   <$> pure a <*> pure b      <*> pure c      <*> allvars f d <*> allvars f e
 
-allvars ∷ Traversal' (Exp a) Name
-allvars f = \case
-  Var n  → Var <$> f n
-  LitI i → pure $  LitI i
-  LitB b → pure $  LitB b
-  While n a b c → While <$> f n    <*> allvars f a <*> allvars f b <*> allvars f c
-  Fn₂ a b c d e → Fn₂   <$> pure a <*> pure b      <*> pure c      <*> allvars f d <*> allvars f e
+fact ∷ Exp (Int, Int)
+fact = 
+  while 
+    (\pair → Fst pair :≤: 4) 
+    (\pair → Pair (1 + Fst pair) (Snd pair))
+    (Pair 0 0)
+
