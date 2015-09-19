@@ -29,6 +29,7 @@ import Control.Monad.State
 import Control.Monad.Writer
 import Numeric.Natural
 import qualified Data.Bits as B
+import Data.Bifunctor
 
 import GHC.Read
 import Test.QuickCheck.Monadic hiding (run)
@@ -45,63 +46,80 @@ import Repr
 import Util
 import Vect
 import Types
+import Variable
+import Declarations
 
 import Data.Proxy
   
-type Label = String
+compileUnop ∷ UnOp a b → Op → Codegen Op
+compileUnop = \case
+  OpNeg → 
+    createBinop "sub" "i32" (ConstNum 0) 
+  OpNot → 
+    createBinop "xor" "i1 " ConstTru     
 
-compile ∷ Exp a → Codegen String
+compileBinop ∷ BinOp a b c → Op → Op → Codegen Op
+compileBinop = \case
+  OpAdd → 
+    createBinop "add" "i32" 
+  OpSub → 
+    createBinop "sub" "i32" 
+  OpMul → 
+    createBinop "mul" "i32" 
+
+  OpEqual → 
+    createBinop "icmp eq"  "i32" 
+  OpNotEqual → 
+    createBinop "icmp ne"  "i32" 
+  OpLessThan → 
+    createBinop "icmp slt" "i32" 
+  OpLessThanEq → 
+    createBinop "icmp sle" "i32" 
+  OpGreaterThan → 
+    createBinop "icmp sgt" "i32" 
+  OpGreaterThanEq → 
+    createBinop "icmp sge" "i32" 
+
+  -- a ∧ b = a * b
+  OpAnd → 
+    createBinop "mul" "i1"  
+
+  -- a ∨ b = a + b + ab
+  OpOr → \a b → do
+    a_plus_b ← createBinop "add" "i1" a b
+    a_mult_b ← createBinop "mul" "i1" a b
+    createBinop "add" "i1" a_plus_b a_mult_b
+
+  OpXor → 
+    createBinop "xor" "i32" 
+
+createBinop ∷ String → String → Op → Op → Codegen Op
+createBinop op ty a b = 
+  namedOp (last (words op)) (printf "%s %s %s, %s" op ty (show a) (show b))
+
+compile ∷ Exp a → Codegen Op
+compile (Var var) = do
+  pure (Reference var)
+
 compile (LitI n) = do
-  return (show n)
+  pure (ConstNum n)
 
 compile Fls = do
-  return "false"
+  pure ConstFls
 
 compile Tru = do
-  return "true"
+  pure ConstTru
 
-compile (Add e₁ e₂) = do
-  reg₁ ← compile e₁
-  reg₂ ← compile e₂
-  add reg₁ reg₂
+compile (UnOp op _ _res a) = do
+  reg ← compile a
 
-compile (Mul e₁ e₂) = do
-  reg₁ ← compile e₁
-  reg₂ ← compile e₂
-  mul reg₁ reg₂
+  compileUnop op reg
 
-compile (And e₁ e₂) = do
-  reg₁ ← compile e₁
-  reg₂ ← compile e₂
-  and reg₁ reg₂
+compile (BinOp op _ _res a b) = do
+  reg₁ ← compile a
+  reg₂ ← compile b
 
-compile (Xor e₁ e₂) = do
-  reg₁ ← compile e₁
-  reg₂ ← compile e₂
-  xor "i32" reg₁ reg₂
-
-compile (Not bool) = do
-  b ← compile bool
-  xor "i1" b "true"
-
-compile (e₁ :≤: e₂) = do
-  reg₁ ← compile e₁
-  reg₂ ← compile e₂
-
-  reg₁ ≤ reg₂
-
-compile (e₁ :<: e₂) = do
-  reg₁ ← compile e₁
-  reg₂ ← compile e₂
-
-  reg₁ <. reg₂
-
-compile (Var n)    = do
-  return ("%var" ++ show n)
-
--- compile (Fn₁ name a) = do
---   param ← compile a
---   instr (printf "call i64 @%s(i64 %s" name param)
+  compileBinop op reg₁ reg₂
 
 -- http://www.stephendiehl.com/llvm/#if-expressions
 compile (If cond tru fls) = do
@@ -113,9 +131,9 @@ compile (If cond tru fls) = do
   br condition if_then if_else
 
   let 
-    block ∷ (Exp a, Label) → Codegen (String, Label)
-    block (val, lbl) = do
-      setBlock lbl
+    block ∷ (Exp a, Label) → Codegen (Op, Label)
+    block (val, label) = do
+      setBlock label
       foo ← compile val
       jmp if_cont
 
@@ -126,8 +144,8 @@ compile (If cond tru fls) = do
       -- recursively could arbitrarily change the notion of the
       -- current block, we are required to get an up-to-date value for
       -- code that will set up the Phi node.”
-      lbl ← getBlock
-      return (foo, lbl)
+      label ← getBlock
+      return (foo, label)
 
   true  ← block (tru, if_then)
   false ← block (fls, if_else)
@@ -135,120 +153,120 @@ compile (If cond tru fls) = do
   setBlock if_cont
   φ (showTy tru) true false
 
-compile (Pair x y) = do
-  let insNum ∷ String → Int → String → Codegen String
-      insNum pair index reg = 
-        namedInstr "updated" 
-         (printf "insertvalue %%pairi32i32 %s, i32 %s, %d" pair reg index)
+-- compile (Pair x y) = do
+--   let insNum ∷ String → Int → String → Codegen String
+--       insNum pair index reg = 
+--         namedInstr "updated" 
+--          (printf "insertvalue %%pairi32i32 %s, i32 %s, %d" pair reg index)
 
-      mkPair ∷ String → String → Codegen String
-      mkPair x y = do
-       let initVal = "{i32 undef, i32 undef}"
-       retVal₁ ← insNum initVal 0 x
-       retVal₂ ← insNum retVal₁ 1 y
-       return retVal₂
+--       mkPair ∷ String → String → Codegen String
+--       mkPair x y = do
+--        let initVal = "{i32 undef, i32 undef}"
+--        retVal₁ ← insNum initVal 0 x
+--        retVal₂ ← insNum retVal₁ 1 y
+--        return retVal₂
 
-  val₁  ← compile x
-  val₂  ← compile y
+--   val₁  ← compile x
+--   val₂  ← compile y
   
-  mkPair val₁ val₂
+--   mkPair val₁ val₂
 
-compile (Fst pair) = do
-  π(0) =<< compile pair
+-- compile (Fst pair) = do
+--   π(0) =<< compile pair
 
-compile (Snd pair) = do
-  π(1) =<< compile pair
+-- compile (Snd pair) = do
+--   π(1) =<< compile pair
 
-compile (While (Lambda n) condTest body init) = mdo
-  entry       ← getBlock
-  while_test  ← addBlock "while.test"
-  while_body  ← addBlock "while.body"
-  while_post  ← addBlock "while.post"
+-- compile (While (Lambda n) condTest body init) = mdo
+--   entry       ← getBlock
+--   while_test  ← addBlock "while.test"
+--   while_body  ← addBlock "while.body"
+--   while_post  ← addBlock "while.post"
 
-  init_val ← compile init
-  jmp while_test
+--   init_val ← compile init
+--   jmp while_test
 
-  -- TEST
-  setBlock while_test
-  val_1 ← φ "i32" (init_val, entry)
-                  (val_2,    while_body)
+--   -- TEST
+--   setBlock while_test
+--   val_1 ← φ "i32" (init_val, entry)
+--                   (val_2,    while_body)
 
-  -- This is an ugly hack, need to rename variable to agree with free
-  -- variable in "condTest" and "body", should rather rename the
-  -- variable (TODO when using bounded on a lower-level IR)
-  variable ← addInstr n ("add i32 0, " ++ val_1)
+--   -- This is an ugly hack, need to rename variable to agree with free
+--   -- variable in "condTest" and "body", should rather rename the
+--   -- variable (TODO when using bounded on a lower-level IR)
+--   variable ← undefined -- addInstr n ("add i32 0, " ++ val_1)
 
-  keepGoing ← compile condTest
-  br keepGoing while_body while_post
+--   keepGoing ← compile condTest
+--   br keepGoing while_body while_post
 
-  -- BODY
-  setBlock while_body
-  val_2 ← compile body 
-  jmp while_test
+--   -- BODY
+--   setBlock while_body
+--   val_2 ← compile body 
+--   jmp while_test
 
-  -- POST
-  setBlock while_post
-  return variable
+--   -- POST
+--   setBlock while_post
+--   return variable
 
--- compile (Arr len n ixf) = mdo
---   entry   ← getBlock
---   loop_1  ← addBlock "arr.loop1"
---   loop_2  ← addBlock "arr.loop2"
---   post    ← addBlock "arr.post"
+-- -- compile (Arr len n ixf) = mdo
+-- --   entry   ← getBlock
+-- --   loop_1  ← addBlock "arr.loop1"
+-- --   loop_2  ← addBlock "arr.loop2"
+-- --   post    ← addBlock "arr.post"
 
---   arrLength ← compile len
---   arrMem    ← mallocStr arrLength
---   buffer    ← getBuffer("i32") arrMem
+-- --   arrLength ← compile len
+-- --   arrMem    ← mallocStr arrLength
+-- --   buffer    ← getBuffer("i32") arrMem
 
---   jmp loop_1
+-- --   jmp loop_1
 
---   -- | arr.loop
---   -- Increment from [0…len) 
---   setBlock loop_1
---   i₀  ← φ "i32" ("0", entry)
---                 (i₁ , loop_2')
---   i₁  ← incr i₀
+-- --   -- | arr.loop
+-- --   -- Increment from [0…len) 
+-- --   setBlock loop_1
+-- --   i₀  ← φ "i32" ("0", entry)
+-- --                 (i₁ , loop_2')
+-- --   i₁  ← incr i₀
 
---   variable ← addInstr n ("add i32 0, " ++ i₀)
+-- --   variable ← addInstr n ("add i32 0, " ++ i₀)
 
---   keepGoing ← i₀ <. arrLength
---   br keepGoing loop_2 post
+-- --   keepGoing ← i₀ <. arrLength
+-- --   br keepGoing loop_2 post
 
---   setBlock loop_2 
+-- --   setBlock loop_2 
 
---   ptr ← "ptr" `namedInstr` printf "getelementptr i32* %s, i32 %s" buffer i₀
+-- --   ptr ← "ptr" `namedInstr` printf "getelementptr i32* %s, i32 %s" buffer i₀
 
---   value ← compile ixf
---   loop_2' ← getBlock
+-- --   value ← compile ixf
+-- --   loop_2' ← getBlock
 
---   ptr ≔ value
---   jmp loop_1
+-- --   ptr ≔ value
+-- --   jmp loop_1
 
---   setBlock post 
+-- --   setBlock post 
 
---   -- | arr.post
---   setBlock post
+-- --   -- | arr.post
+-- --   setBlock post
 
---   return arrMem
+-- --   return arrMem
 
--- compile (Len (Arr len _)) = do
---   compile len
+-- -- compile (Len (Arr len _)) = do
+-- --   compile len
 
-compile (Len arr) = do
-  compile arr >>= getLength -- >>= i32toi64
+-- compile (Len arr) = do
+--   compile arr >>= getLength -- >>= i32toi64
 
-compile (ArrIx arr index) = do
-  array_val ← compile arr
-  index_val ← {- i32toi64 =<< -} compile index
+-- compile (ArrIx arr index) = do
+--   array_val ← compile arr
+--   index_val ← {- i32toi64 =<< -} compile index
 
-  buffer   ← getBuffer("i32") array_val
+--   buffer   ← getBuffer("i32") array_val
 
-  elt_ptr ← namedInstr "ptr" 
-    (printf "getelementptr i32* %s, i32 %s" buffer index_val)
-  namedInstr "length" (printf "load i32* %s" elt_ptr)
+--   elt_ptr ← namedInstr "ptr" 
+--     (printf "getelementptr i32* %s, i32 %s" buffer index_val)
+--   namedInstr "length" (printf "load i32* %s" elt_ptr)
 
-compile (Lam n body) = 
-  undefined 
+-- compile (Lam n body) = 
+--   undefined 
 
 foobarDef ∷ (([String], {- t, -} String), CodegenState) → [Integer] → Writer [String] ()
 foobarDef ((args, {- reg, -} returnType), code) xs = do
@@ -267,7 +285,8 @@ foobarDef ((args, {- reg, -} returnType), code) xs = do
 
   sortedCode ∷ [(String, BasicBlock)]
   sortedCode = M.toList (_codegenStateBlocks code)
-    & sortOn (_index' . snd)
+                 & sortOn (_index' . snd)
+                 & map (first show)
 
   comma = intercalate ", "
 
@@ -308,7 +327,7 @@ mainDef ((args, {-reg, -}returnType), code) xs = do
 -- comp ∶ (Exp a → Exp b)         → Codegen String
 -- comp ∶ (Exp a → Exp b → Exp c) → Codegen String
 
-comp ∷ Exp a → Codegen ([String], String, Maybe String)
+comp ∷ Exp a → Codegen ([String], Op, Maybe String)
 comp exp = do
   let highestBinder = maxLam exp
 
@@ -340,7 +359,7 @@ compileExp exp = runCodegen $ do
   -- Create the entry basic block
   prologue
 
-  (args, reg, Just returnType) ← free'd (comp exp)
+  (args, show → reg, Just returnType) ← free'd (comp exp)
 
   when (returnType == "%Arr*")$ do
     instr_ (printf "store %%Arr* %s, %%Arr** %%out" reg)
@@ -391,6 +410,9 @@ msg exp = do
   system "llc-3.6 -filetype=obj /tmp/foo.ll -o /tmp/foo.o && gcc -o /tmp/foo /tmp/foo.o -L/usr/lib/i386-linux-gnu -lstdc++ && /tmp/foo"
     & void
 
+msgI ∷ Exp Int → IO ()
+msgI = msg
+
 -- -- otp ∷ Vector (Exp Int) → Vector (Exp Int) → Vector (Exp Int)
 -- -- otp = map₂ (⊕)
 
@@ -432,10 +454,10 @@ getOutput exp xs = do
 --   While n a b c → While <$> f n    <*> allvars f a <*> allvars f b <*> allvars f c
 --   Fn₂ a b c d e → Fn₂   <$> pure a <*> pure b      <*> pure c      <*> allvars f d <*> allvars f e
 
-fact ∷ Exp (Int, Int)
-fact = 
-  while 
-    (\pair → Fst pair :≤: 4) 
-    (\pair → Pair (1 + Fst pair) (Snd pair))
-    (Pair 0 0)
+-- fact ∷ Exp (Int, Int)
+-- fact = 
+--   while 
+--     (\pair → Fst pair :≤: 4) 
+--     (\pair → Pair (1 + Fst pair) (Snd pair))
+--     (Pair 0 0)
 

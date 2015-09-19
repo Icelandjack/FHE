@@ -24,11 +24,6 @@ import Variable
 
 type Instruction = String
 
-data Reg 
-  = Reg String 
-  | String String [Reg]
-  deriving Show
-
 data BasicBlock = MkBB {
   _instructions ∷ [Instruction],
   _terminator   ∷ String,
@@ -36,8 +31,8 @@ data BasicBlock = MkBB {
 } deriving Show
 
 data CodegenState = MkCodegen {
-  _codegenStateCurrentBlock ∷ String,
-  _codegenStateBlocks       ∷ M.Map String BasicBlock,
+  _codegenStateCurrentBlock ∷ Label,
+  _codegenStateBlocks       ∷ M.Map Label BasicBlock,
   _codegenStateBlockCount   ∷ Natural, 
   _codegenStateCount        ∷ Natural
 } deriving Show
@@ -49,55 +44,69 @@ makeClassy       ''CodegenState
 makeClassyPrisms ''CodegenState
 makeFields       ''CodegenState
 
-type Codegen = WriterT (Epilogue Instruction) (State CodegenState)
+type Codegen = WriterT (Epilogue Name) (State CodegenState)
 
-newtype Epilogue a 
-  = Epilogue [a] 
+newtype Epilogue a = Epilogue [a]
   deriving (Show, Monoid, Functor, Foldable, Traversable)
+
+-- VARIABLES
+
+fresh ∷ Codegen Natural
+fresh = 
+  count <+= 1
 
 -- | Get a unique string. After several iterations I'm falling back on
 -- appending a fresh number as naively as possible.
+uniqueVarName ∷ String → Codegen Name
+uniqueVarName name  = do
+  Variable name <$> fresh
 
-uniqueName ∷ String → Codegen String
-uniqueName name = do
-  freshVar ← fresh
+uniqueLabelName ∷ String → Codegen Label
+uniqueLabelName name  = do
+  Label name <$> fresh
 
-  let var = Variable name freshVar
+-- global = @
+-- local  = %
+-- namedInstr ∷ String → Instruction → Codegen String
+namedInstr ∷ String → Instruction → Codegen Name
+namedInstr name newInstruction = do
+  var ← uniqueVarName name
 
+  let instr ∷ String
+      instr = printf "%s = %s" (show var) newInstruction
+
+  currentLens.instructions <>= [instr]
   
+  return var
 
-  undefined 
-  -- printf "%s_%d" name <$> fresh
+namedOp ∷ String → Instruction → Codegen Op
+namedOp name newInstruction = 
+  Reference <$> namedInstr name newInstruction
 
--- uniqueName ∷ String → Codegen String 
--- uniqueName "v"  = uniqueName "vv"
--- uniqueName name = do
---   let numberOfUses ∷ Lens' CodegenState (Maybe Natural)
---       numberOfUses = nameUsage.at name
+addBlock ∷ String → Codegen Label
+addBlock str = do
+  blockCnt   ← use blockCount
+  labelName  ← uniqueLabelName str
 
---   lookupName ← use numberOfUses
+  let newBlock ∷ BasicBlock
+      newBlock = emptyBlock blockCnt labelName
 
---   case lookupName of
---     Nothing → do
---       numberOfUses ?= 1
---       pure (name ++ "1")
+  blocks.at labelName ?= newBlock
+  blockCount          += 1
 
---     Just x  → do
---       nameUsage.ix name .= x+1
---       pure (name ++ show (x+1))
+  return labelName
 
-emptyBlock ∷ Natural → String → BasicBlock 
-emptyBlock index name = MkBB [] (error (name ++ ": NEEDS A TERMINATOR")) index
+emptyBlock ∷ Natural → Label → BasicBlock 
+emptyBlock index label = 
+  MkBB [] (error (show label ++ ": NEEDS A TERMINATOR")) index
 
 emptyState ∷ CodegenState
 -- emptyState = MkCodegen (error "no-initial") M.empty 0 {- M.empty -} 0
-emptyState = MkCodegen "no-initial" M.empty 0 {- M.empty -} 0
-  -- "entry"
-  -- (M.singleton "entry" (emptyBlock 0 "entry"))
-  -- 1
-  -- M.empty
-  -- (S.singleton "entry")
-  -- 0
+emptyState = 
+  MkCodegen 
+  (Label "no-initial" 0)
+  M.empty 0 {- M.empty -} 0
+  -- "entry" (M.singleton "entry" (emptyBlock 0 "entry")) 1 M.empty (S.singleton "entry") 0 
 
 -- TODO: vars ∶ [(String, Operand)] to { symtab = vars }
 runCodegen ∷ ∀a. Codegen a → (a, CodegenState)
@@ -109,27 +118,14 @@ runCodegen codegen = runState noEpilogue emptyState
     noEpilogue ∷ State CodegenState a
     noEpilogue = evalWriterT codegen
 
-entry ∷ Codegen String
+entry ∷ Codegen Label
 entry = use currentBlock
 
-addBlock ∷ String → Codegen String
-addBlock str = do
-  blockCnt   ← use blockCount
-  blockName  ← uniqueName str
-
-  let newBlock ∷ BasicBlock
-      newBlock = emptyBlock blockCnt blockName
-
-  blocks.at blockName ?= newBlock
-  blockCount          += 1
-
-  return blockName
-
-setBlock ∷ String → Codegen ()
+setBlock ∷ Label → Codegen ()
 setBlock newBlock = do
   currentBlock .= newBlock
 
-getBlock ∷ Codegen String
+getBlock ∷ Codegen Label
 getBlock = use currentBlock
 
 modifyBlock ∷ BasicBlock → Codegen ()
@@ -137,22 +133,13 @@ modifyBlock new = do
   active ← use currentBlock
   blocks.at active ?= new
 
-fresh ∷ Codegen Natural
-fresh = 
-  count <+= 1
-
 -- current ∷ Codegen BasicBlock
 -- current = do
---   c ← use currentBlock
---   uses blocks (^?! ix c)
-
-current ∷ Codegen BasicBlock
-current = do
-  c    ← use currentBlock
-  blks ← use blocks
-  case M.lookup c blks of
-    Just x  → return x
-    Nothing → error $ "No such block: " ++ show c
+--   c    ← use currentBlock
+--   blks ← use blocks
+--   case M.lookup c blks of
+--     Just x  → return x
+--     Nothing → error $ "No such block: " ++ show c
 
 currentLens ∷ Lens' CodegenState BasicBlock
 currentLens = singular current'
@@ -172,39 +159,12 @@ current'
   <*>
   pure cnt
 
--- global = @
--- local  = %
--- namedInstr ∷ String → Instruction → Codegen String
--- namedInstr var newInstructions = do
---   ref ← fresh
---   blk ← current
+-- -- THIS SHOULD BE REMOVED
+-- addInstr ∷ Natural → String → Codegen String
+-- addInstr (printf "%%var%d" → var) instr = do
+--   currentLens.instructions <>= [printf "%s = %s" var instr]
+--   return var
 
---   let instrs   = _instructions blk
---       localVar = "%" ++ var ++ show ref
-
---   modifyBlock (blk { 
---     _instructions = instrs ++ [localVar ++ " = " ++ newInstructions] 
---   })
-  
---   return localVar
-namedInstr ∷ String → Instruction → Codegen String
-namedInstr var newInstructions = do
-  ref    ← fresh
-
-  let localVar = "%" ++ var ++ show ref
-
-      instr    ∷ String
-      instr    = printf "%s = %s" localVar newInstructions
-
-  currentLens.instructions <>= [instr]
-  
-  return localVar
-
-addInstr ∷ Natural → String → Codegen String
-addInstr (printf "%%var%d" → var) instr = do
-
-  currentLens.instructions <>= [printf "%s = %s" var instr]
-  return var
 -- addInstr ∷ Natural → String → Codegen String
 -- addInstr (printf "%%var%d" → var) instr = do
 --   blk ← current
@@ -215,298 +175,17 @@ addInstr (printf "%%var%d" → var) instr = do
 
 --   return var
 
-instr ∷ Instruction → Codegen String
+instr ∷ Instruction → Codegen Name
 instr = namedInstr "u"
 
 instr_ ∷ Instruction → Codegen ()
-instr_ newInstructions = 
-  currentLens.instructions <>= [newInstructions]
+instr_ newInstruction = 
+  currentLens.instructions <>= [newInstruction]
 
--- instr_ ∷ Instruction → Codegen ()
--- instr_ newInstructions = do
---   blk ← current
---   let instrs = _instructions blk
---   modifyBlock (blk { 
---     _instructions = instrs ++ [newInstructions] 
---   })
-
-terminate ∷ String → Codegen String
+terminate ∷ String → Codegen ()
 terminate newTerm = do
-  currentLens.terminator <.= newTerm
+  currentLens.terminator .= newTerm
+-- terminate ∷ String → Codegen String
+-- terminate newTerm = do
+--   currentLens.terminator <.= newTerm
 
-printArr ∷ [String]
-printArr = [
-  "define void @printArr(%Arr* %str) {",
-  "pre:",
-  "  call i32 (i8*, ...)* @printf(i8* getelementptr([2 x i8]* @open, i32 0, i32 0))",
-  "  %buf.ptr = getelementptr %Arr* %str, i32 0, i32 0",
-  "  %len.ptr = getelementptr %Arr* %str, i32 0, i32 1",
-  "  %buffer  = load i8** %buf.ptr",
-  "  %cast    = bitcast i8* %buffer to i32*",
-  "  %length  = load i32*  %len.ptr",
-  "  %isEmpty = icmp eq i32 %length, 0",
-  "  %length2 = add i32 %length, -1",
-  "  br i1 %isEmpty, label %empty, label %loop.1",
-  "loop.1:",
-  "  %i.1  = phi i32 [ 0,    %pre    ],",
-  "                  [ %i.2, %loop.2 ]",
-  "  %i.2  = add i32 1, %i.1",
-  "  %keepGoing = icmp slt i32 %i.1, %length2",
-  "  %ptr = getelementptr i32* %cast, i32 %i.1",
-  "  br i1 %keepGoing, label %loop.2, label %post",
-  "loop.2:",
-  "  %val = load i32* %ptr",
-  "  call i32 (i8*, ...)* @printf(i8* getelementptr([3 x i8]* @fmt, i32 0, i32 0), i32 %val)",
-  "  call i32 (i8*, ...)* @printf(i8* getelementptr([3 x i8]* @comma, i32 0, i32 0))",
-  "  br label %loop.1",
-  "post:",
-  "  %ptr.post = getelementptr i32* %cast, i32 %i.1",
-  "  %val.post = load i32* %ptr",
-  "  call i32 (i8*, ...)* @printf(i8* getelementptr([3 x i8]* @fmt, i32 0, i32 0), i32 %val.post)",
-  "  br label %empty",
-  "empty:",
-  "  call i32 (i8*, ...)* @printf(i8* getelementptr([2 x i8]* @close, i32 0, i32 0))",
-  "  call void @nl()",
-  "  ret void",
-  "}"]
-
-stringCreateDefault ∷ [String]
-stringCreateDefault = []
-  -- "define fastcc i8* @String_Create_Default(%String* %this, i64 %elts) nounwind {",
-  -- "  ; Initialize 'buffer'.",
-  -- "  %buff.ptr   = getelementptr %String* %this, i32 0, i32 0",
-  -- "  %sizeof     = mul i64 %elts, 8",
-  -- "  %buff.bytes = call i8* @malloc(i32 %sizeof)",
-  -- "  %buff.i64   = bitcast i8* %buff.bytes to i64* ",
-  -- "  store i64* %buff.i64, i64** %buff.ptr",
-  -- "  ; Initialize 'length'.",
-  -- "  %len.ptr = getelementptr %String* %this, i64 0, i64 1",
-  -- "  store i64 %elts, i64* %len.ptr",
-  -- "  ret i8* %buff.bytes",
-  -- "}"]
-
-buttCode ∷ [String]
-buttCode = [
- "define void @butt(i32 %x) {",
-  "  call i32 (i8*, ...)* @printf(i8* getelementptr([3 x i8]* @fmt, i32 0, i32 0), i32 %x)",
-  "  ret void",
-  "}"]
-
-nlCode ∷ [String]
-nlCode = [
-   "define void @nl() {",
-  "  call i32 @puts(i8* getelementptr([1 x i8]* @nil, i32 0, i32 0))",
-  "  ret void",
-  "}"]
-
-showBit ∷ [String]
-showBit = [
-  "define void @showbit(i1 %bit) {",
-  "  br i1 %bit, label %true, label %false",
-  "true:",
-  "  call i32 @puts(i8* getelementptr([5 x i8]* @tru, i32 0, i32 0))",
-  "  ret void",
-  "false:",
-  "  call i32 @puts(i8* getelementptr([6 x i8]* @fls, i32 0, i32 0))",
-  "  ret void",
-  "}"] 
-
-initPair ∷ [String]
-initPair = [
-  "define void @initpair(%pairi32i32* %pair, i32 %fst, i32 %snd) {",
-  "  %pair.1 = getelementptr %pairi32i32* %pair, i32 0, i32 0",
-  "  %pair.2 = getelementptr %pairi32i32* %pair, i32 1, i32 0",
-  "  store i32 %fst, i32* %pair.1",
-  "  store i32 %snd, i32* %pair.2",
-  "  ret void",
-  "}"]
-
-showPair ∷ [String]
-showPair = [
-  "define void @showpair(%pairi32i32 %pair) {",
-  "  %fst = extractvalue %pairi32i32 %pair, 0",
-  "  %snd = extractvalue %pairi32i32 %pair, 1",
-  "  call i32 (i8*, ...)* @printf(i8* getelementptr ([9 x i8]* @pair, i32 0, i32 0), i32 %fst, i32 %snd)",
-  "  call void @nl()",
-  "  ret void ",
-  "}"]
-
-{-
-@.str = private unnamed_addr constant [4 x i8] c"%d\0A\00", align 1
-declare i32 @printf(i8* nocapture, ...) nounwind
-
-define i32 @main() {
-  %1 = add i64 0, 42
-  %2 = tail call i32 (i8*, ...)* @printf(i8* getelementptr inbounds ([4 x i8]* @.str, i64 0, i64 0), i64 %1) nounwind
-  ret i32 0
-}
--}
-
-butt ∷ String → Codegen ()
-butt n = do
-  instr_ (printf "call void @butt(i32 %s)" n)
-  nl
-
-prnt ∷ String → Codegen ()
-prnt str = void $ instr (printf "call i32 (i8*, ...)* @printf(i8* %s)" str)
-
-nl ∷ Codegen ()
-nl = instr_ (printf "call void @nl()")
-
-incr ∷ String → Codegen String
-incr = add "1"
-
-malloc ∷ String → WriterT (Epilogue Instruction) (State CodegenState) String
-malloc size = do
-  mem ← namedInstr "mem" (printf "call i8* @malloc(i32 %s)" size)
-  tell (Epilogue [mem])
-
-  -- arr ← namedInstr "arr" (printf "bitcast i8* %s to i64*" mem)
-  -- %foo = bitcast i8* %1 to %Foo*
-  return mem
-
-mallocStr ∷ String → Codegen String
-mallocStr size = do
-  sizeofString ← sizeof "%Arr"
-
-      --  {- i64* buffer -} + 4 {- i32 len -} 
-  let sizeofString = "8"
-
-  sizeofBuf  ← instr (printf "mul i32 8, %s" size)
-
-  string_mem ← malloc "1" -- sizeofString
-  string     ← namedInstr "str" (printf "bitcast i8* %s to %%Arr*" string_mem)
-
-  buffer_mem ← malloc sizeofBuf
-  -- buffer     ← namedInstr "buf" (printf "bitcast i8* %s to i32*" buffer_mem)
-
-  buffer_ptr ← namedInstr "buffer.ptr"$
-    printf "getelementptr %%Arr* %s, i32 0, i32 0" string
-  length_ptr ← namedInstr "string.ptr"$
-    printf "getelementptr %%Arr* %s, i32 0, i32 1" string
-  
-  instr_ (printf "store i8* %s, i8** %s" buffer_mem buffer_ptr)
-  instr_ (printf "store i32  %s, i32*  %s" size   length_ptr)
-
-  return string
-
-free ∷ String → Codegen ()
-free memptr = do
-  begin   ← addBlock "free.begin"
-  close   ← addBlock "free.close"
-  
-  notNull ← namedInstr "neq" (printf "icmp ne i8* %s, null" memptr)
-
-  br notNull begin close
-
-  setBlock begin 
-  -- butt "42"
-  instr_ (printf "call void @free(i8* %s)" memptr)
-  jmp close
-
-  void (setBlock close)
-
-sizeof ∷ String → Codegen String
-sizeof ty = do
-  ptr ← namedInstr "ptr" (printf "getelementptr %s* null, i32 1" ty)
-  namedInstr "size" (printf "ptrtoint %s* %s to i32" ty ptr)
-       
-add ∷ String → String → Codegen String
-add reg₁ reg₂ = namedInstr "add" (printf "add i32 %s, %s" reg₁ reg₂)
-
-mul ∷ String → String → Codegen String
-mul reg₁ reg₂ = namedInstr "mul" (printf "mul i32 %s, %s" reg₁ reg₂)
-
-and ∷ String → String → Codegen String
-and reg₁ reg₂ = namedInstr "and" (printf "and i1 %s, %s" reg₁ reg₂)
-
-xor ∷ String → String → String → Codegen String
-xor ty reg₁ reg₂ = namedInstr "xor" (printf "xor %s %s, %s" ty reg₁ reg₂)
-
-φ ∷ String → (String, String) → (String, String) → Codegen String
-φ τ (a, b) (c, d) = namedInstr "phi" (printf "phi %s [%s, %%%s], [%s, %%%s]" τ a b c d)
-
-jmp ∷ String → Codegen String
-jmp label = terminate ("br label %" ++ label)
-
-(≠) ∷ String → String → Codegen String
-reg₁ ≠ reg₂ = namedInstr "neq" (printf "icmp ne i32 %s, %s" reg₁ reg₂)
-
-(≡) ∷ String → String → Codegen String
-reg₁ ≡ reg₂ = namedInstr "eq"  (printf "icmp eq i32 %s, %s" reg₁ reg₂)
-
-(≤) ∷ String → String → Codegen String
-reg₁ ≤ reg₂ = namedInstr "sle"  (printf "icmp sle i32 %s, %s" reg₁ reg₂)
-
-(<.) ∷ String → String → Codegen String
-reg₁ <. reg₂ = namedInstr "sle"  (printf "icmp slt i32 %s, %s" reg₁ reg₂)
-
-br ∷ String → String → String → Codegen String
-br a b c = terminate (printf "br i1 %s, label %%%s, label %%%s" a b c)
-
-(≔) ∷ String → String → Codegen ()
-loc ≔ gildi = instr_ (printf "store i32 %s, i32* %s" gildi loc)
-
-π ∷ Int → String → Codegen String
-π(n) pair = "fst" `namedInstr` printf "extractvalue %%pairi32i32 %s, %d" pair n
-
--- Get the underlying buffer
-getBuffer ∷ String → String → Codegen String
-getBuffer ty = 
-  namedInstr "buffer.ptr" . printf "getelementptr %%Arr* %s, i32 0, i32 0"
-  >=>
-  namedInstr "buffer"     . printf "load i8** %s" 
-  >=>
-  namedInstr "cast"       . (printf "bitcast i8* %s to %s*" ?? ty)
-
-getLength ∷ String → Codegen String
-getLength = 
-  namedInstr "len.ptr" . printf "getelementptr %%Arr* %s, i32 0, i32 1" 
-  >=>
-  namedInstr "length"  . printf "load i32* %s"
-
-i32toi64 ∷ String → Codegen String
-i32toi64 = namedInstr "asi32" . printf "zext i32 %s to i64"
-
-definitions ∷ [String]
-definitions = concat 
-  [showBit, buttCode, nlCode, printArr, 
-   initPair, showPair] 
-
-constants ∷ [String]
-constants = [
-  "@.str       = internal constant [4 x i8] c\"%d\\0A\\00\"",
-  "@fmt        = internal constant [3 x i8] c\"%d\00\"",
-  "@comma      = internal constant [3 x i8] c\", \00\"",
-  "@open       = internal constant [2 x i8] c\"[\00\"",
-  "@close      = internal constant [2 x i8] c\"]\00\"",
-  "@nil        = internal constant [1 x i8] c\"\\00\"",
-  "@tru        = internal constant [5 x i8] c\"True\\00\"",
-  "@fls        = internal constant [6 x i8] c\"False\\00\"",
-  "@pair       = internal constant [9 x i8] c\"(%d, %d)\\00\"",
-  "%pairi32i32 = type { i32, i32 }",
-  "%Arr        = type { i8*, i32 }"
-  -- "%BitVector  = type { i1*, i32 }"
-  ]
-
-declarations ∷ [String]
-declarations = [
-  "declare i32  @printf(i8* nocapture, ...) nounwind",
-  "declare i64  @putint(i64)",
-  "declare i64  @plusone(i64)",
-  "declare i32  @puts(i8*)",
-  "declare i8*  @memcpy(i8*, i8*, i32)",
-  "declare i8*  @malloc(i32)",
-  "declare void @free(i8*)"
-  ]
-
-dispatch ∷ String → String
-dispatch "i1"  = 
-  "  call void @showbit(i1 %1)"
-dispatch "i32" = 
-  "  tail call i32 (i8*, ...)* @printf(i8* getelementptr inbounds ([4 x i8]* @.str, i32 0, i32 0), i32 %1) nounwind"
-dispatch "%pairi32i32" = 
-  "  call void @showpair(%pairi32i32 %1)"
-dispatch "%Arr*" = 
-  "  "
-dispatch str = error "foo"
