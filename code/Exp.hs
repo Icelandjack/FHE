@@ -172,21 +172,21 @@ arr len ixf = Arr len (Lambda n) body where
 
 maxLam ∷ Exp a → Natural
 maxLam = \case
-  Var{}           → 0
-  LitI{}          → 0
-  App a b         → maxLam a `max` maxLam b
-  UnOp  _ _ _ a   → maxLam a
-  BinOp _ _ _ a b → maxLam a `max` maxLam b
+  Var{}                 → 0
+  LitI{}                → 0
+  App a b               → maxLam a `max` maxLam b
+  UnOp  _ _ _ a         → maxLam a
+  BinOp _ _ _ a b       → maxLam a `max` maxLam b
 
   -- Binding constructs
-  Lam   n _     → n ^?! var
-  While n _ _ _ → n ^?! var
+  Lam   (VarId n) _     → n 
+  While (VarId n) _ _ _ → n 
 
-  Pair a b      → maxLam a `max` maxLam b
-  Fst a         → maxLam a
-  Snd a         → maxLam a
+  Pair a b              → maxLam a `max` maxLam b
+  Fst a                 → maxLam a
+  Snd a                 → maxLam a
 
-  -- a             → error ("maxLam: " ++ show a)
+  a                     → error ("maxLam: " ++ show a)
 
 instance Show (Exp a) where
   show ∷ Exp a → String
@@ -317,3 +317,12 @@ getTy = \case
 -- (·) = App
 -- -}
 
+instance HasVars (Exp a) (Exp a) Natural Natural where
+  var ∷ Traversal (Exp a) (Exp a) Natural Natural
+  var f = \case
+    Var v  → Var <$> var f v
+
+    LitI i → pure (LitI i)
+    LitB b → pure (LitB b)
+
+    If a b c → If <$> traverseOf var f a <*> traverseOf var f b <*> traverseOf var f c

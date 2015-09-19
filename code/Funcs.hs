@@ -34,7 +34,6 @@ import Data.Bifunctor
 import GHC.Read
 import Test.QuickCheck.Monadic hiding (run)
 import qualified Test.QuickCheck.Monadic as M
-import Control.Lens.Internal.Setter
 import Data.Data
 import Data.Typeable
 
@@ -97,6 +96,9 @@ createBinop ∷ String → String → Op → Op → Codegen Op
 createBinop op ty a b = 
   namedOp (last (words op)) (printf "%s %s %s, %s" op ty (show a) (show b))
 
+-- `compile' has to deal with more than just registers so the return
+-- works with operands `Op' that are either references (`Name') or
+-- constants (`ConstTru', `ConstFls', `ConstNum Int').
 compile ∷ Exp a → Codegen Op
 compile (Var var) = do
   pure (Reference var)
@@ -123,9 +125,9 @@ compile (BinOp op _ _res a b) = do
 
 -- http://www.stephendiehl.com/llvm/#if-expressions
 compile (If cond tru fls) = do
-  if_then ← addBlock "if.then"
-  if_else ← addBlock "if.else"
-  if_cont ← addBlock "if.cont"
+  if_then ← newBlock "if.then"
+  if_else ← newBlock "if.else"
+  if_cont ← newBlock "if.cont"
 
   condition ← compile cond
   br condition if_then if_else
@@ -179,9 +181,9 @@ compile (If cond tru fls) = do
 
 -- compile (While (Lambda n) condTest body init) = mdo
 --   entry       ← getBlock
---   while_test  ← addBlock "while.test"
---   while_body  ← addBlock "while.body"
---   while_post  ← addBlock "while.post"
+--   while_test  ← newBlock "while.test"
+--   while_body  ← newBlock "while.body"
+--   while_post  ← newBlock "while.post"
 
 --   init_val ← compile init
 --   jmp while_test
@@ -210,9 +212,9 @@ compile (If cond tru fls) = do
 
 -- -- compile (Arr len n ixf) = mdo
 -- --   entry   ← getBlock
--- --   loop_1  ← addBlock "arr.loop1"
--- --   loop_2  ← addBlock "arr.loop2"
--- --   post    ← addBlock "arr.post"
+-- --   loop_1  ← newBlock "arr.loop1"
+-- --   loop_2  ← newBlock "arr.loop2"
+-- --   post    ← newBlock "arr.post"
 
 -- --   arrLength ← compile len
 -- --   arrMem    ← mallocStr arrLength
@@ -275,6 +277,11 @@ foobarDef ((args, {- reg, -} returnType), code) xs = do
   tell ["}"]
 
   where
+  sortedCode ∷ [(String, BasicBlock)]
+  sortedCode = M.toList (code^.blocks)
+                 & sortOn (view (_2.index'))
+                 & map (first show)
+
   foobarBody ∷ MonadWriter [String] f ⇒ [(String, BasicBlock)] → f ()
   foobarBody code = do
     for_ code $ \(label, MkBB{..}) → do
@@ -283,18 +290,10 @@ foobarDef ((args, {- reg, -} returnType), code) xs = do
         tell ["  " ++ instruction]
       tell ["  " ++ _terminator]
 
-  sortedCode ∷ [(String, BasicBlock)]
-  sortedCode = M.toList (_codegenStateBlocks code)
-                 & sortOn (_index' . snd)
-                 & map (first show)
-
-  comma = intercalate ", "
-
-  isArray ∷ Bool
+  comma   = intercalate ", "
   isArray = returnType == "%Arr*"
-
-  args' = comma $ [ "%Arr** %out" | isArray    ] 
-               ++ [ "i32 %" ++ arg   | arg ← args ]
+  args'   = comma $ [ "%Arr** %out"  | isArray    ] 
+                 ++ [ "i32 %" ++ arg | arg ← args ]
 
 mainDef ∷ (([String], {-t, -} String), CodegenState) → [Integer] → Writer [String] ()
 mainDef ((args, {-reg, -}returnType), code) xs = do
@@ -372,7 +371,7 @@ compileExp exp = runCodegen $ do
   where
     prologue ∷ Codegen ()
     prologue = do
-      name ← addBlock "entry"
+      name ← newBlock "entry"
       setBlock name
 
     -- Free pointers in epilogue

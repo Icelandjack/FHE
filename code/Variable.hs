@@ -23,6 +23,12 @@ data VarName id
   | Variable String id
   deriving (Eq, Ord, Functor, Foldable, Traversable)
 
+pattern VarId ∷ id → VarName id
+pattern VarId id ← ((\case 
+    Lambda     id → id
+    Variable _ id → id) → id) where
+        VarId id = Lambda id
+
 data Label 
   = Label String Natural
   deriving (Eq, Ord)
@@ -38,19 +44,19 @@ data Operand a
   | ConstNum Int
   deriving (Functor, Traversable, Foldable)
 
-instance Show a ⇒ Show (Operand a) where
-  show = \case
-    Reference a → show a
-    ConstTru    → "true"
-    ConstFls    → "false"
-    ConstNum i  → show i
-
 instance Show a ⇒ Show (VarName a) where
   show (Lambda        i) = "%var"       ++ "_" ++ show i
   show (Variable name i) = "%" ++ name  ++ "_" ++ show i
 
 instance Show Label where
   show (Label    name i) = name ++ "_" ++ show i
+
+instance Show a ⇒ Show (Operand a) where
+  show = \case
+    Reference a → show a
+    ConstTru    → "true"
+    ConstFls    → "false"
+    ConstNum i  → show i
 
 -- Lenses
 
