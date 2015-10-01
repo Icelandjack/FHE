@@ -21,6 +21,7 @@ import Data.Char
 
 import Util
 import Variable
+import Exp
 
 type Instruction = String
 
@@ -56,7 +57,10 @@ makeClassyPrisms ''CodegenState
 makeFields       ''CodegenState
 
 -- | The code generation monad.
-type Codegen = WriterT (Epilogue Name) (State CodegenState)
+newtype Codegen a = CG (WriterT (Epilogue Name) (State CodegenState) a)
+  deriving (Functor, Applicative, Monad,
+            MonadWriter (Epilogue Name),
+            MonadState  CodegenState)
 
 -- | TODO: Explain.
 -- This is used to store actions that need to be run after the
@@ -64,12 +68,16 @@ type Codegen = WriterT (Epilogue Name) (State CodegenState)
 newtype Epilogue a = Epilogue [a]
   deriving (Show, Monoid, Functor, Foldable, Traversable)
 
--- | Gets the value 
+-- | Gets the value and final state
 runCodegen ∷ Codegen a → (a, CodegenState)
 runCodegen = runCodegenWith emptyState
 
+-- | Gets the value 
+evalCodegen ∷ Codegen c → c
+evalCodegen = fst . runCodegen
+
 runCodegenWith ∷ ∀a. CodegenState → Codegen a → (a, CodegenState)
-runCodegenWith initState codegen = runState noEpilogue initState
+runCodegenWith initState (CG codegen) = runState noEpilogue initState
 
   where
     -- We've already used the epilogue so we are only interested in
@@ -87,8 +95,7 @@ emptyBlock label = do
   index ← blockCount <+= 1
   pure (MkBB [] terminator index) where
 
-  terminator ∷ String
-  terminator = error (printf "%s: NEEDS A TERMINATOR!" (show label))
+    terminator = error (show label ++ ": NEEDS A TERMINATOR!")
 
 -- | Creates a new block given a string as a preferred name.
 newBlock ∷ String → Codegen Label
@@ -141,7 +148,7 @@ currBlock = lens get set where
 
 -- TODO: Use non-bogus initial label.
 emptyState ∷ CodegenState
-emptyState = MkCodegen (Label "no-initial" 0) M.empty 0 0
+emptyState = MkCodegen (Label "NO-INITIAL!!!" 0) M.empty 0 0
 
 ------------------------------------------------------------------------------
 -- Variables
@@ -161,6 +168,86 @@ uniqueVarName name = do
 uniqueLabelName ∷ String → Codegen Label
 uniqueLabelName name  = do
   Label name <$> fresh
+
+-- Makes all generated variable names unique.
+-- Carries around a map from names to their new names.
+-- Our first tier of variables comes from converting higher-order
+-- syntax to first-order syntax.
+-- 
+-- TODO: Check invariants of circular method.
+makeFresh ∷ M.Map Name Name → Exp a → Codegen (Exp a)
+makeFresh m = \case
+  -- Interesting cases, 
+  Var name → 
+    case M.lookup name m of
+      Nothing →
+        pure (Var name)
+      Just newName → 
+        pure (Var newName)
+
+  While n cond body init → do
+    new ← uniqueVarName "while"
+    let m' = M.insert n new m
+
+    While new
+      <$> makeFresh m' cond
+      <*> makeFresh m' body
+      <*> makeFresh m' init
+  
+  Arr len n val → do
+    new ← uniqueVarName "while"
+    let m' = M.insert n new m
+
+    Arr 
+      <$> makeFresh m' len
+      <*> pure new
+      <*> makeFresh m' val
+
+  Lam n body → do
+    new ← uniqueVarName "while"
+    let m' = M.insert n new m
+
+    Lam
+      <$> pure new
+      <*> makeFresh m' body
+
+  -- Rote
+  LitI i → 
+    pure (LitI i)
+
+  LitB b → 
+    pure (LitB b)
+
+  If a b c → 
+    If 
+      <$> makeFresh m a 
+      <*> makeFresh m b 
+      <*> makeFresh m c
+
+  UnOp op f rep a → 
+    UnOp op f rep 
+      <$> makeFresh m a
+
+  BinOp op f rep a b → 
+    BinOp op f rep
+      <$> makeFresh m a 
+      <*> makeFresh m b
+
+  Len arr →
+    Len <$> makeFresh m arr
+
+  ArrIx arr ix → 
+    ArrIx 
+      <$> makeFresh m arr
+      <*> makeFresh m ix
+
+  Fst pair → 
+    Fst <$> makeFresh m pair
+
+  Snd pair → 
+    Snd <$> makeFresh m pair
+
+  _ → error "add case"
 
 ------------------------------------------------------------------------------
 -- OPERATIONS
@@ -185,7 +272,6 @@ namedInstr name newInstruction = do
   ref ← uniqueVarName name
 
   instr_ (printf "%s = %s" (show ref) newInstruction)
-
   return ref
 
 -- | Adds an instruction to the current basic block and returns the
@@ -211,12 +297,7 @@ fakeBasicBlock = MkBB ["a = 5", "b = a + a", "c = a + b"] "ret a + b + c" 5
 fakeBasicBlock' = MkBB ["litla", "rassgat"] "ret 420" 10
 -}
 
--- -- THIS SHOULD BE REMOVED
--- addInstr ∷ Natural → String → Codegen String
--- addInstr (printf "%%var%d" → var) instr = do
---   currBlock.instructions <>= [printf "%s = %s" var instr]
---   return var
-
+-- THIS SHOULD BE REMOVED
 -- addInstr ∷ Natural → String → Codegen String
 -- addInstr (printf "%%var%d" → var) instr = do
 --   blk ← current

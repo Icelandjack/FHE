@@ -33,7 +33,11 @@ data UnOp a b where
 
 deriving instance Eq   (UnOp a b)
 deriving instance Ord  (UnOp a b)
-deriving instance Show (UnOp a b)
+
+instance Show (UnOp a b) where
+  show = \case
+    OpNot → "¬"
+    OpNeg → "-"
 
 pattern Not ∷ (a → b) ~ (Bool → Bool) ⇒ Exp a → Exp b
 pattern Not b       ← UnOp OpNot not TBool b where
@@ -69,7 +73,21 @@ data BinOp a b c where
 
 deriving instance Eq   (BinOp a b c)
 deriving instance Ord  (BinOp a b c)
-deriving instance Show (BinOp a b c)
+
+instance Show (BinOp a b c) where
+  show = \case
+    OpAdd           → "+"
+    OpSub           → "-"
+    OpMul           → "*"
+    OpEqual         → "="
+    OpNotEqual      → "≠"
+    OpLessThan      → "<"
+    OpLessThanEq    → "≤"
+    OpGreaterThan   → ">"
+    OpGreaterThanEq → "≥"
+    OpAnd           → "∧"
+    OpOr            → "∨"
+    OpXor           → "⊕"
 
 pattern Add ∷ (a → b → c) ~ (Int → Int → Int) ⇒ Exp a → Exp b → Exp c
 pattern Add a        b        ← BinOp OpAdd (+) TInt a b where
