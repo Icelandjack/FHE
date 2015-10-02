@@ -6,28 +6,31 @@ import Numeric.Natural
 type Name = VarName Natural
 type Op   = Operand Name
 
+
 -- | Variables, the unique part is their 'Natural' identifier, this
 -- way variables constructed when going from a higher- to a
 -- first-order representation won't care about the variable names:
 -- only their number.
 
-data VarName id
-  -- | Variable from converting HOAS to a first-order representation:
-  --    lam (\x -> x + x)
-  -- => Lam (Lambda 1) (Add (Var 1) (Var 1))
-  -- This is generated from a different source than other variables so
-  -- for they are implicitly prefaced with 'var'
-  = Lambda id
-
-  -- | Variables from other sources
-  | Variable String id
+-- | Variables along with their name and identifier.
+-- The identifier should be unique after a pass from 'makeFresh'.
+data VarName id 
+  = Variable String id
   deriving (Eq, Ord, Functor, Foldable, Traversable)
 
+-- | Variable from converting HOAS to a first-order representation:
+--    lam (\x -> x + x)
+-- => Lam (Lambda 1) (Add (Var (Lambda 1)) (Var (Lambda 1)))
+-- == Lam (Var "lam" 1) (Add (Var (V "lam" 1)) (Var (V "lam" 1)))
+-- 
+-- This is generated from a different source than other variables so
+-- they are prefaced with "lam".
+pattern Lambda ∷ id → VarName id
+pattern Lambda id = Variable "lam" id
+
+-- | Getting the identifier from a variable.
 pattern VarId ∷ id → VarName id
-pattern VarId id ← ((\case 
-    Lambda     id → id
-    Variable _ id → id) → id) where
-        VarId id = Lambda id
+pattern VarId id ← Variable _ id
 
 data Label 
   = Label String Natural
@@ -45,7 +48,6 @@ data Operand a
   deriving (Functor, Traversable, Foldable)
 
 instance Show a ⇒ Show (VarName a) where
-  show (Lambda        i) = "%var"       ++ "_" ++ show i
   show (Variable name i) = "%" ++ name  ++ "_" ++ show i
 
 instance Show Label where
@@ -69,7 +71,6 @@ class HasVars s t a b | s → a, t → b, s b → t, t a → s where
 instance HasVars (VarName id) (VarName id') id id' where
   --  ∶ Traversal' Name Natural
   var ∷ Traversal (VarName id) (VarName id') id id'
-  var f (Lambda        id) = Lambda   <$>               f id
   var f (Variable name id) = Variable <$> pure name <*> f id
 
 instance HasVars Label Label Natural Natural where
@@ -82,9 +83,3 @@ instance HasVars s t a b ⇒ HasVars (Operand s) (Operand t) a b where
   -- var ∷ Traversal (Operand s) (Operand t) a b
   -- var = traverseOf (traverse.var)
 
--- name ∷ Prism' (VarName id) (String, id)
--- name = prism'
---   (\(str, id) → Variable str id)
---   (\case 
---     Lambda        _  → Nothing
---     Variable name id → Just (name, id))

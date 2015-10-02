@@ -1,4 +1,4 @@
--- {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE UnicodeSyntax #-}
 
 module Codegen where
@@ -16,8 +16,12 @@ import Data.Foldable
 import Data.Traversable
 import Control.Lens
 import Numeric.Natural
+import Formatting
+import Formatting.Internal
 
-import Data.Char
+import Data.Text.Internal.Builder
+import qualified Data.Text.Lazy as TL
+import qualified Data.Text.Lazy.Builder as TLB
 
 import Util
 import Variable
@@ -37,13 +41,13 @@ type Instruction = String
 --     ret i32 %b
 -- The `index'' keeps track of the order 
 
-data BasicBlock = MkBB {
+data BasicBlock = BB {
   _instructions ∷ [Instruction],
   _terminator   ∷ String,
   _index'       ∷ Natural
 } deriving (Eq, Show)
 
-data CodegenState = MkCodegen {
+data CodegenState = CGS {
   _codegenStateCurrentBlock ∷ Label,
   _codegenStateBlocks       ∷ M.Map Label BasicBlock,
   _codegenStateBlockCount   ∷ Natural, 
@@ -60,7 +64,8 @@ makeFields       ''CodegenState
 newtype Codegen a = CG (WriterT (Epilogue Name) (State CodegenState) a)
   deriving (Functor, Applicative, Monad,
             MonadWriter (Epilogue Name),
-            MonadState  CodegenState)
+            MonadState  CodegenState,
+            MonadFix)
 
 -- | TODO: Explain.
 -- This is used to store actions that need to be run after the
@@ -93,7 +98,7 @@ runCodegenWith initState (CG codegen) = runState noEpilogue initState
 emptyBlock ∷ Label → Codegen BasicBlock
 emptyBlock label = do
   index ← blockCount <+= 1
-  pure (MkBB [] terminator index) where
+  pure (BB [] terminator index) where
 
     terminator = error (show label ++ ": NEEDS A TERMINATOR!")
 
@@ -148,7 +153,7 @@ currBlock = lens get set where
 
 -- TODO: Use non-bogus initial label.
 emptyState ∷ CodegenState
-emptyState = MkCodegen (Label "NO-INITIAL!!!" 0) M.empty 0 0
+emptyState = CGS (Label "NO-INITIAL!!!" 0) M.empty 0 0
 
 ------------------------------------------------------------------------------
 -- Variables
@@ -169,11 +174,11 @@ uniqueLabelName ∷ String → Codegen Label
 uniqueLabelName name  = do
   Label name <$> fresh
 
--- Makes all generated variable names unique.
+-- | Makes all generated variable names unique.
 -- Carries around a map from names to their new names.
 -- Our first tier of variables comes from converting higher-order
 -- syntax to first-order syntax.
--- 
+
 -- TODO: Check invariants of circular method.
 makeFresh ∷ M.Map Name Name → Exp a → Codegen (Exp a)
 makeFresh m = \case
@@ -249,36 +254,161 @@ makeFresh m = \case
 
   _ → error "add case"
 
+-- | Invariant: 'new ∷ Name' is a fresh variable and does not appear in
+-- 'Exp a'.
+-- 
+-- Substitutes a variable by a new variable.
+-- data Operand a = Reference a | ConstTru | ConstFls | ConstNum Int
+rename ∷ Name → Name → Exp a → Codegen (Exp a)
+rename old new originalExp = case originalExp of
+  -- Interesting cases, 
+  Var name 
+    | name == old 
+    → pure (Var new)
+
+    | otherwise
+    → pure originalExp
+
+  While name cond body init 
+    | name == old
+    → pure originalExp
+
+    | otherwise
+    → While name
+        <$> rename old new cond
+        <*> rename old new body
+        <*> rename old new init
+  
+  Arr len name val 
+    | name == old
+    → pure originalExp
+    
+    | otherwise 
+    → Arr 
+        <$> rename old new len 
+        <*> pure name
+        <*> rename old new val
+
+  Lam name body 
+    | name == old
+    → pure originalExp
+
+    | otherwise
+    → Lam
+        <$> pure name
+        <*> rename old new body
+
+  -- Rote
+  LitI i → 
+    pure (LitI i)
+
+  LitB b → 
+    pure (LitB b)
+
+  If a b c → 
+    If 
+      <$> rename old new a 
+      <*> rename old new b 
+      <*> rename old new c
+
+  UnOp op f rep a → 
+    UnOp op f rep 
+      <$> rename old new a
+
+  BinOp op f rep a b → 
+    BinOp op f rep
+      <$> rename old new a 
+      <*> rename old new b
+
+  Len arr →
+    Len <$> rename old new arr
+
+  ArrIx arr ix → 
+    ArrIx 
+      <$> rename old new arr
+      <*> rename old new ix
+
+  Fst pair → 
+    Fst <$> rename old new pair
+
+  Snd pair → 
+    Snd <$> rename old new pair
+
+  _ → error "add case"
+
 ------------------------------------------------------------------------------
 -- OPERATIONS
 ------------------------------------------------------------------------------
 
+-- | Adds an instruction to the current basic block and returns the
+-- reference as an operand for easier use with `compile'.
+namedInstr ∷ LeInstr Name a ⇒ String → Format (Codegen Name) a → a
+namedInstr name = le'instr (Name name)
+
+namedOp ∷ LeInstr Op a ⇒ String → Format (Codegen Op) a → a
+namedOp name = le'instr (Op name)
+
 -- | Appends a raw instruction (as a String…) to the instruction list of
 -- the current block, returns its newly generated identifier which is
 -- based off "u".
-instr ∷ Instruction → Codegen Name
-instr = namedInstr "u"
+instr ∷ LeInstr Name a ⇒ Format (Codegen Name) a → a
+instr = namedInstr "u" 
+
+op ∷ LeInstr Op a ⇒ Format (Codegen Op) a → a
+op = namedOp "u" 
 
 -- | Appends a raw instruction (as a String…) to the instruction list of
 -- the current block.
-instr_ ∷ Instruction → Codegen ()
-instr_ newInstruction = 
-  currBlock.instructions <>= [newInstruction]
+instr_ ∷ LeInstr () a ⇒ Format (Codegen ()) a → a
+instr_ = le'instr Unit 
+
+data Arg a where
+  Unit ∷ Arg ()
+  Name ∷ String → Arg Name
+  Op   ∷ String → Arg Op
+
+class LeInstr r a where
+  le'instr ∷ Arg r → Format (Codegen r) a → a
+
+instance LeInstr () (Codegen ()) where
+  le'instr ∷ Arg () → Format (Codegen ()) (Codegen ()) → Codegen ()
+  le'instr Unit = runFormat ?? (\builder → do
+    let instr = TL.unpack (TLB.toLazyText builder)
+    currBlock.instructions <>= [instr])
+
+instance LeInstr Name (Codegen Name) where
+  le'instr ∷ Arg Name → Format (Codegen Name) (Codegen Name) → Codegen Name
+  le'instr (Name name) = runFormat ?? (\instr → do
+    ref ← uniqueVarName name
+    le'instr Unit (shown % " = " % builder) ref instr
+    pure ref)
+
+-- instance LeInstr Name (Codegen Op) where
+--   le'instr ∷ Arg Name → Format (Codegen Name) (Codegen Op) → Codegen Op
+--   le'instr (Name name) = runFormat ?? (\instr → do
+--     ref ← uniqueVarName name
+--     le'instr Unit (shown % " = " % builder) ref instr
+--     pure (Reference ref))
+
+instance LeInstr Op (Codegen Op) where
+  le'instr ∷ Arg Op → Format (Codegen Op) (Codegen Op) → Codegen Op
+  le'instr (Op name) = runFormat ?? (\instr → do
+    ref ← uniqueVarName name
+    le'instr Unit (shown % " = " % builder) ref instr
+    pure (Reference ref))
+
+instance LeInstr ()   r ⇒ LeInstr ()   (a → r) where le'instr = le'instr
+instance LeInstr Name r ⇒ LeInstr Name (a → r) where le'instr = le'instr
+instance LeInstr Op   r ⇒ LeInstr Op   (a → r) where le'instr = le'instr
 
 -- | Appends an instruction to the instruction list of the current
 -- block, generating a unique identifier.
-namedInstr ∷ String → Instruction → Codegen Name
-namedInstr name newInstruction = do
+-- namedInstr ∷ String → Instruction → Codegen Name
+namedInstr' ∷ String → Instruction → Codegen Name
+namedInstr' name newInstruction = do
   ref ← uniqueVarName name
-
-  instr_ (printf "%s = %s" (show ref) newInstruction)
+  instr_ (shown % " = " % string) ref newInstruction
   return ref
-
--- | Adds an instruction to the current basic block and returns the
--- reference as an operand for easier use with `compile'.
-namedOp ∷ String → Instruction → Codegen Op
-namedOp name newInstruction = 
-  Reference <$> namedInstr name newInstruction
 
 -- | Appends a terminator instruction to the current basic block's
 -- instruction list.
@@ -307,4 +437,20 @@ fakeBasicBlock' = MkBB ["litla", "rassgat"] "ret 420" 10
 --   })
 
 --   return var
+
+emit ∷ MonadWriter [t] m ⇒ t → m ()
+emit x = tell [x]
+
+emitWhen ∷ MonadWriter [t] m ⇒ Bool → t → m ()
+emitWhen cond x = 
+  when cond 
+    (tell [x])
+
+indented ∷ MonadWriter [String] m ⇒ String → m ()
+indented x = emit ("  " ++ x)
+
+indentedWhen ∷ MonadWriter [String] m ⇒ Bool → String → m ()
+indentedWhen cond x = 
+  emitWhen cond
+    ("  " ++ x)
 
