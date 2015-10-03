@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE UnicodeSyntax #-}
 
 module Codegen where
@@ -14,13 +15,18 @@ import Data.Functor.Identity
 import Text.Printf
 import Data.Foldable
 import Data.Traversable
-import Control.Lens
+import Control.Lens hiding (op)
 import Numeric.Natural
+import Data.List
+
 import Formatting
 import Formatting.Internal
+import Formatting.ShortFormatters
 
 import Data.Text.Internal.Builder
-import qualified Data.Text.Lazy as TL
+
+import qualified Data.Text              as T
+import qualified Data.Text.Lazy         as TL
 import qualified Data.Text.Lazy.Builder as TLB
 
 import Util
@@ -340,75 +346,87 @@ rename old new originalExp = case originalExp of
 -- OPERATIONS
 ------------------------------------------------------------------------------
 
+-- | Appends a raw instruction (as a String…) to the instruction list of
+-- the current block.
+instr_ ∷ Format (Codegen ()) a → a
+instr_ = runFormat ?? \txtBuilder → do
+  let instr = TL.unpack (TLB.toLazyText txtBuilder)
+  currBlock.instructions <>= [instr]
+
+-- | Adds an instruction to the current basic block and returns the
+-- variable name of the register returned.
+namedInstr ∷ String → Format (Codegen Name) a → a
+namedInstr name = runFormat ?? \txtBuilder → do
+  ref ← uniqueVarName name
+  instr_ (sh%" = "%builder) ref txtBuilder
+  pure ref
+
 -- | Adds an instruction to the current basic block and returns the
 -- reference as an operand for easier use with `compile'.
-namedInstr ∷ LeInstr Name a ⇒ String → Format (Codegen Name) a → a
-namedInstr name = le'instr (Name name)
-
-namedOp ∷ LeInstr Op a ⇒ String → Format (Codegen Op) a → a
-namedOp name = le'instr (Op name)
+namedOp ∷ String → Format (Codegen Op) a → a
+namedOp name = runFormat ?? \txtBuilder → do
+  ref ← uniqueVarName name
+  instr_ (sh%" = "%builder) ref txtBuilder
+  pure (Reference ref)
 
 -- | Appends a raw instruction (as a String…) to the instruction list of
 -- the current block, returns its newly generated identifier which is
 -- based off "u".
-instr ∷ LeInstr Name a ⇒ Format (Codegen Name) a → a
+instr ∷ Format (Codegen Name) a → a
 instr = namedInstr "u" 
 
-op ∷ LeInstr Op a ⇒ Format (Codegen Op) a → a
+op ∷ Format (Codegen Op) a → a
 op = namedOp "u" 
 
--- | Appends a raw instruction (as a String…) to the instruction list of
--- the current block.
-instr_ ∷ LeInstr () a ⇒ Format (Codegen ()) a → a
-instr_ = le'instr Unit 
+-- | Emit a binary operation.
+createBinop ∷ String → String → Op → Op → Codegen Op
+createBinop op =  
+  namedOp (last (words op))
+    (s% " " %s% " " %sh% ", " %sh) op 
 
-data Arg a where
-  Unit ∷ Arg ()
-  Name ∷ String → Arg Name
-  Op   ∷ String → Arg Op
+-- | Compiles a unary operation.
+compileUnop ∷ UnOp a b → Op → Codegen Op
+compileUnop = \case
+  OpNeg → 
+    createBinop "sub" "i32" (ConstNum 0) 
+  OpNot → 
+    createBinop "xor" "i1 " ConstTru
 
-class LeInstr r a where
-  le'instr ∷ Arg r → Format (Codegen r) a → a
+-- | Compiles a binary operation.
+compileBinop ∷ BinOp a b c → Op → Op → Codegen Op
+compileBinop = \case
+  OpAdd → 
+    createBinop "add" "i32"
+  OpSub → 
+    createBinop "sub" "i32" 
+  OpMul → 
+    createBinop "mul" "i32" 
 
-instance LeInstr () (Codegen ()) where
-  le'instr ∷ Arg () → Format (Codegen ()) (Codegen ()) → Codegen ()
-  le'instr Unit = runFormat ?? (\builder → do
-    let instr = TL.unpack (TLB.toLazyText builder)
-    currBlock.instructions <>= [instr])
+  OpEqual → 
+    createBinop "icmp eq"  "i32" 
+  OpNotEqual → 
+    createBinop "icmp ne"  "i32" 
+  OpLessThan → 
+    createBinop "icmp slt" "i32" 
+  OpLessThanEq → 
+    createBinop "icmp sle" "i32" 
+  OpGreaterThan → 
+    createBinop "icmp sgt" "i32" 
+  OpGreaterThanEq → 
+    createBinop "icmp sge" "i32" 
 
-instance LeInstr Name (Codegen Name) where
-  le'instr ∷ Arg Name → Format (Codegen Name) (Codegen Name) → Codegen Name
-  le'instr (Name name) = runFormat ?? (\instr → do
-    ref ← uniqueVarName name
-    le'instr Unit (shown % " = " % builder) ref instr
-    pure ref)
+  -- a ∧ b = a * b
+  OpAnd → 
+    createBinop "mul" "i1"  
 
--- instance LeInstr Name (Codegen Op) where
---   le'instr ∷ Arg Name → Format (Codegen Name) (Codegen Op) → Codegen Op
---   le'instr (Name name) = runFormat ?? (\instr → do
---     ref ← uniqueVarName name
---     le'instr Unit (shown % " = " % builder) ref instr
---     pure (Reference ref))
+  -- a ∨ b = a + b + ab
+  OpOr → \a b → do
+    a_plus_b ← createBinop "add" "i1" a b
+    a_mult_b ← createBinop "mul" "i1" a b
+    createBinop "add" "i1" a_plus_b a_mult_b
 
-instance LeInstr Op (Codegen Op) where
-  le'instr ∷ Arg Op → Format (Codegen Op) (Codegen Op) → Codegen Op
-  le'instr (Op name) = runFormat ?? (\instr → do
-    ref ← uniqueVarName name
-    le'instr Unit (shown % " = " % builder) ref instr
-    pure (Reference ref))
-
-instance LeInstr ()   r ⇒ LeInstr ()   (a → r) where le'instr = le'instr
-instance LeInstr Name r ⇒ LeInstr Name (a → r) where le'instr = le'instr
-instance LeInstr Op   r ⇒ LeInstr Op   (a → r) where le'instr = le'instr
-
--- | Appends an instruction to the instruction list of the current
--- block, generating a unique identifier.
--- namedInstr ∷ String → Instruction → Codegen Name
-namedInstr' ∷ String → Instruction → Codegen Name
-namedInstr' name newInstruction = do
-  ref ← uniqueVarName name
-  instr_ (shown % " = " % string) ref newInstruction
-  return ref
+  OpXor → 
+    createBinop "xor" "i32" 
 
 -- | Appends a terminator instruction to the current basic block's
 -- instruction list.
@@ -416,6 +434,31 @@ namedInstr' name newInstruction = do
 terminate ∷ String → Codegen ()
 terminate newTerm = do
   currBlock.terminator .= newTerm
+
+------------------------------------------------------------------------------
+-- CODE GENERATION
+------------------------------------------------------------------------------
+
+emit ∷ MonadWriter [String] m ⇒ Format (m ()) b → b
+emit = emitWhen True
+
+emitWhen ∷ MonadWriter [String] m ⇒ Bool → Format (m ()) b → b
+emitWhen cond = runFormat ?? \txtBuilder → do
+  let code = TL.unpack (TLB.toLazyText txtBuilder)
+  when cond
+    (tell [code])
+
+indented ∷ MonadWriter [String] m ⇒ Format (m ()) b → b
+indented = indentedWhen True
+
+indentedWhen ∷ MonadWriter [String] m ⇒ Bool → Format (m ()) b → b
+indentedWhen cond = runFormat ?? \txtBuilder → do
+  let code = TL.unpack (TLB.toLazyText txtBuilder)
+  when cond
+    (tell ["  " ++ code])
+
+comma ∷ Format r ([String] → r)
+comma = later (TLB.fromText . T.pack . intercalate ", ")
 
 {-
 --Debug
@@ -426,31 +469,3 @@ fakeCodegen = MkCodegen other (M.fromList [(entry, fakeBasicBlock), (foo,  fakeB
 fakeBasicBlock = MkBB ["a = 5", "b = a + a", "c = a + b"] "ret a + b + c" 5
 fakeBasicBlock' = MkBB ["litla", "rassgat"] "ret 420" 10
 -}
-
--- THIS SHOULD BE REMOVED
--- addInstr ∷ Natural → String → Codegen String
--- addInstr (printf "%%var%d" → var) instr = do
---   blk ← current
-
---   modifyBlock (blk { 
---     _instructions = _instructions blk ++ [printf "%s = %s" var instr]
---   })
-
---   return var
-
-emit ∷ MonadWriter [t] m ⇒ t → m ()
-emit x = tell [x]
-
-emitWhen ∷ MonadWriter [t] m ⇒ Bool → t → m ()
-emitWhen cond x = 
-  when cond 
-    (tell [x])
-
-indented ∷ MonadWriter [String] m ⇒ String → m ()
-indented x = emit ("  " ++ x)
-
-indentedWhen ∷ MonadWriter [String] m ⇒ Bool → String → m ()
-indentedWhen cond x = 
-  emitWhen cond
-    ("  " ++ x)
-

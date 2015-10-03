@@ -31,14 +31,17 @@ import Control.Monad.Writer
 import Numeric.Natural
 import qualified Data.Bits as B
 import Data.Bifunctor
+import Control.Exception (evaluate)
 
 import GHC.Read
 import Test.QuickCheck.Monadic hiding (run)
 import qualified Test.QuickCheck.Monadic as M
 import Data.Data
 import Data.Typeable
+import Debug.Trace
 
 import Formatting
+import Formatting.ShortFormatters
 
 import Control.Lens hiding (index, (<.), Indexed)
 
@@ -50,55 +53,6 @@ import Vect
 import Types
 import Variable
 import Declarations
-
-import Data.Proxy
-  
-compileUnop ∷ UnOp a b → Op → Codegen Op
-compileUnop = \case
-  OpNeg → 
-    createBinop "sub" "i32" (ConstNum 0) 
-  OpNot → 
-    createBinop "xor" "i1 " ConstTru     
-
-compileBinop ∷ BinOp a b c → Op → Op → Codegen Op
-compileBinop = \case
-  OpAdd → 
-    createBinop "add" "i32" 
-  OpSub → 
-    createBinop "sub" "i32" 
-  OpMul → 
-    createBinop "mul" "i32" 
-
-  OpEqual → 
-    createBinop "icmp eq"  "i32" 
-  OpNotEqual → 
-    createBinop "icmp ne"  "i32" 
-  OpLessThan → 
-    createBinop "icmp slt" "i32" 
-  OpLessThanEq → 
-    createBinop "icmp sle" "i32" 
-  OpGreaterThan → 
-    createBinop "icmp sgt" "i32" 
-  OpGreaterThanEq → 
-    createBinop "icmp sge" "i32" 
-
-  -- a ∧ b = a * b
-  OpAnd → 
-    createBinop "mul" "i1"  
-
-  -- a ∨ b = a + b + ab
-  OpOr → \a b → do
-    a_plus_b ← createBinop "add" "i1" a b
-    a_mult_b ← createBinop "mul" "i1" a b
-    createBinop "add" "i1" a_plus_b a_mult_b
-
-  OpXor → 
-    createBinop "xor" "i32" 
-
-createBinop ∷ String → String → Op → Op → Codegen Op
-createBinop op ty a b =  
-  namedOp (last (words op)) 
-    (string% " " %string% " " %shown% ", " %shown) op ty a b
 
 -- `compile' has to deal with more than just registers so the return
 -- works with operands `Op' that are either references (`Name') or
@@ -116,12 +70,12 @@ compile Fls = do
 compile Tru = do
   pure ConstTru
 
-compile (UnOp op _ _res a) = do
+compile (UnOp op _ _ a) = do
   reg ← compile a
 
   compileUnop op reg
 
-compile (BinOp op _ _res a b) = do
+compile (BinOp op _ _ a b) = do
   reg₁ ← compile a
   reg₂ ← compile b
 
@@ -164,7 +118,7 @@ compile (If cond tru fls) = do
 --   let insNum ∷ String → Int → String → Codegen String
 --       insNum pair index reg = 
 --         namedInstr "updated" 
---          (printf "insertvalue %%pairi32i32 %s, i32 %s, %d" pair reg index)
+--          (PRINTF "insertvalue %%pairi32i32 %s, i32 %s, %d" pair reg index)
 
 --       mkPair ∷ String → String → Codegen String
 --       mkPair x y = do
@@ -241,14 +195,14 @@ compile (Arr len var ixf) = mdo
   i₁  ← incr i₀
 
   keepGoing ← namedOp "slt"
-    ("icmp slt i32 " %shown% ", " %shown) i₀ arrLength
+    ("icmp slt i32 " %sh% ", " %sh) i₀ arrLength
 
   br keepGoing loop_2 post
 
   setBlock loop_2 
 
   ptr ← namedInstr "ptr" 
-    ("getelementptr i32* " %shown% ", i32 " %shown) buffer i₀
+    ("getelementptr i32* " %sh% ", i32 " %sh) buffer i₀
 
   value    ← compile =<< rename var i₀ ixf
   loop_2'  ← getBlock
@@ -276,56 +230,53 @@ compile (Arr len var ixf) = mdo
 --   buffer   ← getBuffer("i32") array_val
 
 --   elt_ptr ← namedInstr "ptr" 
---     (printf "getelementptr i32* %s, i32 %s" buffer index_val)
---   namedInstr "length" (printf "load i32* %s" elt_ptr)
+--     (PRINTF "getelementptr i32* %s, i32 %s" buffer index_val)
+--   namedInstr "length" (PRINTF "load i32* %s" elt_ptr)
 
 -- compile (Lam n body) = 
 --   undefined 
 
 foobarDef ∷ (([String], {- t, -} String), CodegenState) → [Integer] → Writer [String] ()
 foobarDef ((args, {- reg, -} returnType), code) xs = do
-  emit (printf "define %s @foobar(%s) {" returnType args')
+  emit ("define "%s%" @foobar("%comma%") {") returnType args'
   genBody sortedCode
   emit "}"
 
   where
   genBody ∷ MonadWriter [String] f ⇒ [(String, BasicBlock)] → f ()
-  genBody code = do
+  genBody code = 
     for_ code 
-      genBasicBlock
+      genBasicBlock 
 
   genBasicBlock ∷ MonadWriter [String] f ⇒ (String, BasicBlock) → f ()
   genBasicBlock (label, basicBlock) = do
-    emit (label ++ ":")
     for_ (basicBlock^.instructions) 
-      indented
-    indented (basicBlock^.terminator)
+      (indented string)
+    indented string (basicBlock^.terminator)
 
   sortedCode ∷ [(String, BasicBlock)]
   sortedCode = M.toList (code^.blocks)
                  & sortOn (view (_2.index'))
                  & map (first show)
 
-  comma   = intercalate ", "
   isArray = returnType == "%Arr*"
-  args'   = comma $ [ "%Arr** %out"  | isArray    ] 
-                 ++ [ "i32 %" ++ arg | arg ← args ]
+  args'   = [ "%Arr** %out"  | isArray    ] 
+         ++ [ "i32 %" ++ arg | arg ← args ]
 
 mainDef ∷ (([String], {-t, -} String), CodegenState) → [Integer] → Writer [String] ()
 mainDef ((args, {-reg, -}returnType), code) xs = do
   let isArray ∷ Bool
       isArray = returnType == "%Arr*"
 
-      xs' = intercalate ", " $
-          [ "%Arr** %arrmem" | isArray ]
-       ++ [ "i32 "  ++ show x   | x ← xs  ]
+      xs' = [ "%Arr** %arrmem"  | isArray ]
+         ++ [ "i32 "  ++ show x | x ← xs  ]
 
-  emit ("define i32 @main(i32 %argc, i8** %argv) {")
+  emit "define i32 @main(i32 %argc, i8** %argv) {"
 
   indentedWhen isArray
     "%arrmem = alloca %Arr*"
 
-  indented (printf "%%1 = call %s @foobar(%s)" returnType xs')
+  indented ("%1 = call "%s%" @foobar("%comma%")") returnType xs'
 
   indentedWhen isArray 
     "%arr = load %Arr** %arrmem"
@@ -379,9 +330,8 @@ compileExp exp = runCodegen $ do
   prologue
 
   (args, reg, Just returnType) ← free'd (comp exp)
-
   when (returnType == "%Arr*")$ do
-    instr_ ("store %Arr* " %shown% ", %Arr** %out") reg
+    instr_ ("store %Arr* " %sh% ", %Arr** %out") reg
 
   {-reg ← -}
   terminate (printf "ret %s %s" returnType (show reg))
@@ -389,6 +339,7 @@ compileExp exp = runCodegen $ do
   return (args, {- reg, -} returnType)
 
   where
+    -- TODO: use this pattern in compile
     prologue ∷ Codegen ()
     prologue = do
       name ← newBlock "entry"
