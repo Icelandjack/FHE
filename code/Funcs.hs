@@ -161,14 +161,14 @@ compile (While var condTest body init) = mdo
   --   val_1 ← φ …
   -- which is a fresh variable. So we replace all occurances of
   -- "%lam_1" in the conditional and body before compiling it.
-  keepGoing ← compile =<< rename var val_1 condTest
+  keepGoing ← compile (rename var val_1 condTest)
   br keepGoing while_body while_post
 
   -- BODY
   setBlock while_body
 
   -- Same as with the conditional expression.
-  val_2     ← compile =<< rename var val_1 body 
+  val_2     ← compile (rename var val_1 body)
   jmp while_cond
 
   -- POST
@@ -204,7 +204,7 @@ compile (Arr len var ixf) = mdo
   ptr ← namedInstr "ptr" 
     ("getelementptr i32* " %sh% ", i32 " %sh) buffer i₀
 
-  value    ← compile =<< rename var i₀ ixf
+  value    ← compile (rename var i₀ ixf)
   loop_2'  ← getBlock
 
   ptr ≔ value

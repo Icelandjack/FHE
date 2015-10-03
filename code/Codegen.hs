@@ -206,7 +206,7 @@ makeFresh m = \case
       <*> makeFresh m' init
   
   Arr len n val → do
-    new ← uniqueVarName "while"
+    new ← uniqueVarName "arr"
     let m' = M.insert n new m
 
     Arr 
@@ -215,7 +215,7 @@ makeFresh m = \case
       <*> makeFresh m' val
 
   Lam n body → do
-    new ← uniqueVarName "while"
+    new ← uniqueVarName "lam"
     let m' = M.insert n new m
 
     Lam
@@ -265,80 +265,79 @@ makeFresh m = \case
 -- 
 -- Substitutes a variable by a new variable.
 -- data Operand a = Reference a | ConstTru | ConstFls | ConstNum Int
-rename ∷ Name → Name → Exp a → Codegen (Exp a)
+rename ∷ Name → Name → Exp a → Exp a
 rename old new originalExp = case originalExp of
   -- Interesting cases, 
   Var name 
     | name == old 
-    → pure (Var new)
+    → Var new
 
     | otherwise
-    → pure originalExp
+    → originalExp
 
   While name cond body init 
     | name == old
-    → pure originalExp
+    → originalExp
 
     | otherwise
-    → While name
-        <$> rename old new cond
-        <*> rename old new body
-        <*> rename old new init
+    → While name 
+        (rename old new cond)
+        (rename old new body)
+        (rename old new init)
   
   Arr len name val 
     | name == old
-    → pure originalExp
+    → originalExp
     
     | otherwise 
     → Arr 
-        <$> rename old new len 
-        <*> pure name
-        <*> rename old new val
+        (rename old new len)
+        name
+        (rename old new val)
 
   Lam name body 
     | name == old
-    → pure originalExp
+    → originalExp
 
     | otherwise
-    → Lam
-        <$> pure name
-        <*> rename old new body
+    → Lam name
+        (rename old new body)
 
   -- Rote
   LitI i → 
-    pure (LitI i)
+    LitI i
 
   LitB b → 
-    pure (LitB b)
+    LitB b
 
   If a b c → 
     If 
-      <$> rename old new a 
-      <*> rename old new b 
-      <*> rename old new c
+      (rename old new a)
+      (rename old new b)
+      (rename old new c)
 
   UnOp op f rep a → 
     UnOp op f rep 
-      <$> rename old new a
+      (rename old new a)
 
   BinOp op f rep a b → 
     BinOp op f rep
-      <$> rename old new a 
-      <*> rename old new b
+      (rename old new a)
+      (rename old new b)
 
   Len arr →
-    Len <$> rename old new arr
+    Len (rename old new arr)
 
   ArrIx arr ix → 
     ArrIx 
-      <$> rename old new arr
-      <*> rename old new ix
+      (rename old new arr)
+      (rename old new ix)
 
   Fst pair → 
-    Fst <$> rename old new pair
+    Fst (rename old new pair)
 
   Snd pair → 
-    Snd <$> rename old new pair
+    Snd (rename old new pair)
 
   _ → error "add case"
 
