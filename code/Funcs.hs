@@ -1,5 +1,9 @@
 {-# LANGUAGE RebindableSyntax, PatternSynonyms, UnicodeSyntax, LambdaCase, ViewPatterns, ScopedTypeVariables, RecordWildCards, OverloadedStrings #-}
 
+-- Feldspar compiler's input is a core language program represented as
+-- a graph.  This graph is first transformed to an ABSTRACT
+-- IMPERAITIVE PROGRAM that is no longer purely functional. 
+
 -- http://ellcc.org/demo/index.cgi
 
 -- Metaphors don't inspire definitions but insight and intuition.
@@ -43,7 +47,7 @@ import Debug.Trace
 import Formatting
 import Formatting.ShortFormatters
 
-import Control.Lens hiding (index, (<.), Indexed)
+import Control.Lens hiding (op, index, (<.), Indexed)
 
 import Codegen
 import Exp
@@ -210,8 +214,6 @@ compile (Arr len var ixf) = mdo
   ptr ≔ value
   jmp loop_1
 
-  setBlock post 
-
   -- | arr.post
   setBlock post
 
@@ -236,19 +238,19 @@ compile (Arr len var ixf) = mdo
 -- compile (Lam n body) = 
 --   undefined 
 
-foobarDef ∷ (([String], {- t, -} String), CodegenState) → [Integer] → Writer [String] ()
+foobarDef ∷ (([Name], {- t, -} String), CodegenState) → [Integer] → Writer [String] ()
 foobarDef ((args, {- reg, -} returnType), code) xs = do
   emit ("define "%s%" @foobar("%comma%") {") returnType args'
   genBody sortedCode
   emit "}"
 
   where
-  genBody ∷ MonadWriter [String] f ⇒ [(String, BasicBlock)] → f ()
+  genBody ∷ [(String, BasicBlock)] → Writer [String] ()
   genBody code = 
     for_ code 
       genBasicBlock 
 
-  genBasicBlock ∷ MonadWriter [String] f ⇒ (String, BasicBlock) → f ()
+  genBasicBlock ∷ (String, BasicBlock) → Writer [String] ()
   genBasicBlock (label, basicBlock) = do
     for_ (basicBlock^.instructions) 
       (indented string)
@@ -260,10 +262,10 @@ foobarDef ((args, {- reg, -} returnType), code) xs = do
                  & map (first show)
 
   isArray = returnType == "%Arr*"
-  args'   = [ "%Arr** %out"  | isArray    ] 
-         ++ [ "i32 %" ++ arg | arg ← args ]
+  args'   = [ "%Arr** %out"       | isArray    ] 
+         ++ [ "i32 %" ++ show arg | arg ← args ]
 
-mainDef ∷ (([String], {-t, -} String), CodegenState) → [Integer] → Writer [String] ()
+mainDef ∷ (([Name], {-t, -} String), CodegenState) → [Integer] → Writer [String] ()
 mainDef ((args, {-reg, -}returnType), code) xs = do
   let isArray ∷ Bool
       isArray = returnType == "%Arr*"
@@ -288,76 +290,53 @@ mainDef ((args, {-reg, -}returnType), code) xs = do
         "  ret i32 0",
         "}"]
 
--- Feldspar compiler's input is a core language program represented as
--- a graph.  This graph is first transformed to an ABSTRACT
--- IMPERAITIVE PROGRAM that is no longer purely functional. 
-
--- Compile
-
 -- comp ∶ (Exp a)                 → Codegen String
 -- comp ∶ (Exp a → Exp b)         → Codegen String
 -- comp ∶ (Exp a → Exp b → Exp c) → Codegen String
+class Comp a where
+  comp ∷ a → Codegen (Op, [Name], Maybe String)
 
-comp ∷ Exp a → Codegen ([String], Op, Maybe String)
-comp exp = do
-  -- Make all variables and binders unique 
-  exp' ← makeFresh M.empty exp
+instance Comp (Exp a) where
+  comp ∷ Exp a → Codegen (Op, [Name], Maybe String)
+  comp exp = do
+    -- Make all variables and binders unique 
+    exp' ← makeFresh exp
 
-  compiled ← compile exp'
-  return ([], compiled, Just (showTy exp'))
+    compiled ← compile exp'
+    pure (compiled, [], Just (showTy exp'))
 
--- class Comp a where
---   comp ∷ a → Codegen ([String], String, Maybe String)
+instance Comp p ⇒ Comp (Exp a → p) where
+  comp ∷ (Exp a → p) → Codegen (Op, [Name], Maybe String)
+  comp partAppliedExp = do
+    var ← uniqueVarName "arg"
+    let exp = partAppliedExp (Var var)
+    (op, args, ty) ← comp exp 
+    pure (op, var : args, ty)
 
--- instance Comp (Exp a) where
---   comp ∷ Exp a → Codegen ([String], String, Maybe String)
---   comp exp = do
---     compiled ← compile exp
---     return ([], compiled, Just (showTy exp))
-
--- instance Comp p ⇒ Comp (Exp a → p) where
---   comp ∷ (Exp a → p) → Codegen ([String], String, Maybe String)
---   comp f = do
---     arg                   ← fresh
---     (args, code, Nothing) ← comp (f (Var arg))
-
---     return (arg : args, code, Nothing)
-
--- compileExp ∷ Comp a ⇒ a → (([String], String, String), CodegenState)
-compileExp ∷ Exp a → (([String], {-String, -}String), CodegenState)
+compileExp ∷ Comp a ⇒ a → (([Name], String), CodegenState)
 compileExp exp = runCodegen $ do
-  -- Create the entry basic block
-  prologue
-
-  (args, reg, Just returnType) ← free'd (comp exp)
+  (reg, args, Just returnType) ← free'd (comp exp)
   when (returnType == "%Arr*")$ do
     instr_ ("store %Arr* " %sh% ", %Arr** %out") reg
 
-  {-reg ← -}
-  terminate (printf "ret %s %s" returnType (show reg))
+  terminate ("ret "%s%" "%op) returnType reg
 
-  return (args, {- reg, -} returnType)
+  return (args, returnType)
 
   where
-    -- TODO: use this pattern in compile
-    prologue ∷ Codegen ()
-    prologue = do
-      name ← newBlock "entry"
-      setBlock name
-
     -- Free pointers in epilogue
     free'd ∷ Codegen a → Codegen a
     free'd = id -- useOutput (traverse_ free) 
 
 -- Run
 run ∷ Exp a → IO ()
-run = (getOutput ?? []) >=> putStrLn
+run = getOutput [] >=> putStrLn
 
 runI ∷ Exp Int → IO ()
 runI = run
 
 runRead ∷ Read a ⇒ Exp a → IO a
-runRead exp = read.last.lines <$> getOutput exp []
+runRead exp = read.last.lines <$> getOutput [] exp
 
 -- Code
 code ∷ Exp a → IO ()
@@ -369,9 +348,9 @@ code exp = compileExp exp
 codeI ∷ Exp Int → IO ()
 codeI = code
 
-msg ∷ Exp a → IO ()
+msg ∷ Comp exp ⇒ exp → IO ()
 msg exp = do
-  getOutput exp [] 
+  getOutput [] exp
 
   system "llc-3.6 -filetype=obj /tmp/foo.ll -o /tmp/foo.o && gcc -o /tmp/foo /tmp/foo.o -L/usr/lib/i386-linux-gnu -lstdc++ && /tmp/foo"
     & void
@@ -380,8 +359,8 @@ msgI ∷ Exp Int → IO ()
 msgI = msg
 
 -- runPure ∷ Comp exp ⇒ exp → [Integer] → Writer [String] ()
-runPure ∷ Exp a → [Integer] → Writer [String] ()
-runPure exp xs = do
+runPure ∷ Comp exp ⇒ [Integer] → exp → Writer [String] ()
+runPure xs exp = do
   let result = compileExp exp
 
   tell constants
@@ -391,10 +370,9 @@ runPure exp xs = do
   foobarDef result xs
   mainDef   result xs
 
--- getOutput ∷ Comp a ⇒ a → [Integer] → IO String
-getOutput ∷ Exp a → [Integer] → IO String
-getOutput exp xs = do
-  runPure exp xs
+getOutput ∷ Comp exp ⇒ [Integer] → exp → IO String
+getOutput xs exp = do
+  runPure xs exp
     & execWriter
     & unlines
     & writeFile "/tmp/foo.ll"

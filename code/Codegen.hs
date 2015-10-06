@@ -15,7 +15,10 @@ import Data.Functor.Identity
 import Text.Printf
 import Data.Foldable
 import Data.Traversable
+
 import Control.Lens hiding (op)
+import Control.Lens.Internal.Zoom
+
 import Numeric.Natural
 import Data.List
 
@@ -66,12 +69,22 @@ makeClassy       ''CodegenState
 makeClassyPrisms ''CodegenState
 makeFields       ''CodegenState
 
+type Codegen = Codegen' CodegenState
+
 -- | The code generation monad.
-newtype Codegen a = CG (WriterT (Epilogue Name) (State CodegenState) a)
+newtype Codegen' st a = CG { runCG ∷ WriterT (Epilogue Name) (State st) a }
   deriving (Functor, Applicative, Monad,
             MonadWriter (Epilogue Name),
-            MonadState  CodegenState,
+            MonadState  st,
             MonadFix)
+
+type instance Zoomed (Codegen' st) = Zoomed (WriterT (Epilogue Name) (State st))
+
+-- zoom currentBlock ∷ Codegen' Label c → Codegen c
+instance Zoom (Codegen' state) (Codegen' state') state state' where
+    zoom ∷ LensLike' (Zoomed (Codegen' state) c) state' state
+         → Codegen' state c → Codegen' state' c
+    zoom l (CG m) = CG (zoom l m)
 
 -- | TODO: Explain.
 -- This is used to store actions that need to be run after the
@@ -79,22 +92,41 @@ newtype Codegen a = CG (WriterT (Epilogue Name) (State CodegenState) a)
 newtype Epilogue a = Epilogue [a]
   deriving (Show, Monoid, Functor, Foldable, Traversable)
 
+------------------------------------------------------------------------------
+-- State Operations 
+------------------------------------------------------------------------------
+
+-- See explanation in ‘runCodegenWith’.
+uninitialisedState ∷ CodegenState
+uninitialisedState = CGS (Label "NO-INITIAL!!!" 0) M.empty 0 0 
+
 -- | Gets the value and final state
-runCodegen ∷ Codegen a → (a, CodegenState)
-runCodegen = runCodegenWith emptyState
+runCodegen ∷ Codegen' CodegenState a → (a, CodegenState)
+runCodegen = runCodegenWith uninitialisedState
 
 -- | Gets the value 
 evalCodegen ∷ Codegen c → c
 evalCodegen = fst . runCodegen
 
+
 runCodegenWith ∷ ∀a. CodegenState → Codegen a → (a, CodegenState)
-runCodegenWith initState (CG codegen) = runState noEpilogue initState
+runCodegenWith initState codegen = runState noEpilogue initState
 
   where
     -- We've already used the epilogue so we are only interested in
     -- the return value
     noEpilogue ∷ State CodegenState a
-    noEpilogue = evalWriterT codegen
+    noEpilogue = evalWriterT $ runCG $ do
+
+      -- This is a bit odd, to initialize a state CodegenState needs
+      -- an initial Label but to create a label purely I would have to
+      -- duplicate all the logic in `newBlock` and `setBlock`: since
+      -- this cannot be done purely the initial state is uninitialised
+      -- and then initialised within the Codegen Monad.
+
+      -- Creates the initial entry block.
+      setNewBlock "entry"
+      codegen
 
 ------------------------------------------------------------------------------
 -- Block Operations 
@@ -106,7 +138,7 @@ emptyBlock label = do
   index ← blockCount <+= 1
   pure (BB [] terminator index) where
 
-    terminator = error (show label ++ ": NEEDS A TERMINATOR!")
+    terminator = "BOGUS TERMINATOR" -- error (show label ++ ": NEEDS A TERMINATOR!")
 
 -- | Creates a new block given a string as a preferred name.
 newBlock ∷ String → Codegen Label
@@ -119,17 +151,25 @@ newBlock name = do
   pure blockName
 
 setBlock ∷ Label → Codegen ()
-setBlock newBlock = do
-  currentBlock .= newBlock
+setBlock blockName = do
+  currentBlock .= blockName
+
+-- | The not-as-common-as-originally-though idiom of creating and
+-- setting a block.
+setNewBlock ∷ String → Codegen Label
+setNewBlock name = do
+  label ← newBlock name
+  setBlock label
+  pure label
 
 getBlock ∷ Codegen Label
 getBlock = do
   use currentBlock
 
--- | Sets the current block to `new'.
-modifyBlock ∷ BasicBlock → Codegen ()
-modifyBlock new = do
-  currBlock .= new
+-- | Sets the current block to `new'. Currently unused?
+-- modifyBlock ∷ BasicBlock → Codegen ()
+-- modifyBlock new = do
+--   currBlock .= new
 
 -- | A lens that peers into CodegenState's map of blocks and focuses
 -- on the value pointed at by the current block as key.
@@ -152,14 +192,6 @@ currBlock = lens get set where
     = codegenState 
         & blocks.ix (codegenState^.currentBlock) .~ bb
     | otherwise = error "CURRENT BLOCK NOT IN MAP"
-
-------------------------------------------------------------------------------
--- State Operations 
-------------------------------------------------------------------------------
-
--- TODO: Use non-bogus initial label.
-emptyState ∷ CodegenState
-emptyState = CGS (Label "NO-INITIAL!!!" 0) M.empty 0 0
 
 ------------------------------------------------------------------------------
 -- Variables
@@ -186,80 +218,82 @@ uniqueLabelName name  = do
 -- syntax to first-order syntax.
 
 -- TODO: Check invariants of circular method.
-makeFresh ∷ M.Map Name Name → Exp a → Codegen (Exp a)
-makeFresh m = \case
-  -- Interesting cases, 
-  Var name → 
-    case M.lookup name m of
-      Nothing →
-        pure (Var name)
-      Just newName → 
-        pure (Var newName)
-
-  While n cond body init → do
-    new ← uniqueVarName "while"
-    let m' = M.insert n new m
-
-    While new
-      <$> makeFresh m' cond
-      <*> makeFresh m' body
-      <*> makeFresh m' init
+makeFresh ∷ Exp a → Codegen (Exp a)
+makeFresh = aux M.empty where 
+  aux ∷ M.Map Name Name → Exp a → Codegen (Exp a)
+  aux m = \case
+    -- Interesting cases, 
+    Var name → 
+      case M.lookup name m of
+        Nothing →
+          pure (Var name)
+        Just newName → 
+          pure (Var newName)
   
-  Arr len n val → do
-    new ← uniqueVarName "arr"
-    let m' = M.insert n new m
-
-    Arr 
-      <$> makeFresh m' len
-      <*> pure new
-      <*> makeFresh m' val
-
-  Lam n body → do
-    new ← uniqueVarName "lam"
-    let m' = M.insert n new m
-
-    Lam
-      <$> pure new
-      <*> makeFresh m' body
-
-  -- Rote
-  LitI i → 
-    pure (LitI i)
-
-  LitB b → 
-    pure (LitB b)
-
-  If a b c → 
-    If 
-      <$> makeFresh m a 
-      <*> makeFresh m b 
-      <*> makeFresh m c
-
-  UnOp op f rep a → 
-    UnOp op f rep 
-      <$> makeFresh m a
-
-  BinOp op f rep a b → 
-    BinOp op f rep
-      <$> makeFresh m a 
-      <*> makeFresh m b
-
-  Len arr →
-    Len <$> makeFresh m arr
-
-  ArrIx arr ix → 
-    ArrIx 
-      <$> makeFresh m arr
-      <*> makeFresh m ix
-
-  Fst pair → 
-    Fst <$> makeFresh m pair
-
-  Snd pair → 
-    Snd <$> makeFresh m pair
-
-  _ → error "add case"
-
+    While n cond body init → do
+      new ← uniqueVarName "while"
+      let m' = M.insert n new m
+  
+      While new
+        <$> aux m' cond
+        <*> aux m' body
+        <*> aux m' init
+    
+    Arr len n val → do
+      new ← uniqueVarName "arr"
+      let m' = M.insert n new m
+  
+      Arr 
+        <$> aux m' len
+        <*> pure new
+        <*> aux m' val
+  
+    Lam n body → do
+      new ← uniqueVarName "lam"
+      let m' = M.insert n new m
+  
+      Lam
+        <$> pure new
+        <*> aux m' body
+  
+    -- Rote
+    LitI i → 
+      pure (LitI i)
+  
+    LitB b → 
+      pure (LitB b)
+  
+    If a b c → 
+      If 
+        <$> aux m a 
+        <*> aux m b 
+        <*> aux m c
+  
+    UnOp op f rep a → 
+      UnOp op f rep 
+        <$> aux m a
+  
+    BinOp op f rep a b → 
+      BinOp op f rep
+        <$> aux m a 
+        <*> aux m b
+  
+    Len arr →
+      Len <$> aux m arr
+  
+    ArrIx arr ix → 
+      ArrIx 
+        <$> aux m arr
+        <*> aux m ix
+  
+    Fst pair → 
+      Fst <$> aux m pair
+  
+    Snd pair → 
+      Snd <$> aux m pair
+  
+    _ → error "add case"
+  
 -- | Invariant: 'new ∷ Name' is a fresh variable and does not appear in
 -- 'Exp a'.
 -- 
@@ -374,8 +408,17 @@ namedOp name = runFormat ?? \txtBuilder → do
 instr ∷ Format (Codegen Name) a → a
 instr = namedInstr "u" 
 
-op ∷ Format (Codegen Op) a → a
-op = namedOp "u" 
+operand ∷ Format (Codegen Op) a → a
+operand = namedOp "u" 
+
+-- | Appends a terminator instruction to the current basic block's
+-- instruction list.
+-- Will overwrite existing terminator.
+terminate ∷ Format (Codegen ()) a → a
+terminate = runFormat ?? \txtBuilder → do
+  let newTerminator = TL.unpack (TLB.toLazyText txtBuilder)
+
+  currBlock.terminator .= newTerminator
 
 -- | Emit a binary operation.
 createBinop ∷ String → String → Op → Op → Codegen Op
@@ -427,13 +470,6 @@ compileBinop = \case
   OpXor → 
     createBinop "xor" "i32" 
 
--- | Appends a terminator instruction to the current basic block's
--- instruction list.
--- Will overwrite existing terminator.
-terminate ∷ String → Codegen ()
-terminate newTerm = do
-  currBlock.terminator .= newTerm
-
 ------------------------------------------------------------------------------
 -- CODE GENERATION
 ------------------------------------------------------------------------------
@@ -458,6 +494,12 @@ indentedWhen cond = runFormat ?? \txtBuilder → do
 
 comma ∷ Format r ([String] → r)
 comma = later (TLB.fromText . T.pack . intercalate ", ")
+
+lbl ∷ Format r (Label → r)
+lbl = later (\lbl → TLB.fromText (T.pack ("%" ++ show lbl)))
+
+op ∷ Format r (Op → r)
+op = later (TLB.fromText . T.pack . show)
 
 {-
 --Debug
