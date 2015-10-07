@@ -199,12 +199,17 @@ maxLam = \case
   -- Binding constructs
   Lam   (VarId n) _     → n 
   While (VarId n) _ _ _ → n 
+  Arr _ (VarId n) _     → n
 
   Pair a b              → maxLam a `max` maxLam b
   Fst a                 → maxLam a
   Snd a                 → maxLam a
 
-  a                     → error ("maxLam: " ++ show a)
+  -- Arrays
+  Len arr               → maxLam arr
+  ArrIx arr ix          → maxLam arr `max` maxLam ix
+
+  a                     → error ("maxLam: ") -- ++ show a)
 
 instance Show (Exp a) where
   show ∷ Exp a → String
@@ -261,8 +266,8 @@ instance Num (Exp Int) where
 -- -- pattern Snd x ← Fn₁ "snd" (TPair TInt TInt :→: TInt) _   x where
 -- --         Snd x = Fn₁ "snd" (TPair TInt TInt :→: TInt) snd x where
 
--- (⊔) ∷ Exp Int → Exp Int → Exp Int
--- a ⊔ b = If (a :≤: b) a b
+min' ∷ Exp Int → Exp Int → Exp Int
+min' a b = If (LessThanEq a b) a b
 
 -- swap ∷ Exp (Int, Int) → Exp (Int, Int)
 -- swap (Pair a b) = Pair b a

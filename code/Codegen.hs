@@ -1,4 +1,126 @@
-{-# LANGUAGE OverloadedStrings #-}
+-- Idea for programming game:
+--   Puzzle Game.
+-- Game board consists of empty (_) or marked (X) cells, whose colour
+-- is purely decorative (for now?)
+-- 
+--   lvl(-1): 
+--     PERSONALITY TEST.
+-- 
+-- >> WELCOME.
+-- FIRST WE NEED TO RUN A PERSONALITY TEST.
+-- 
+-- ON THE SCREEN YOU SHOULD SEE TWO CELLS.
+--   [G(reen)]  [B(lue)]
+-- SUPPRESS THE CELL THAT CONTAINS YOUR FAVOURITE COLOUR.
+
+-- 4 cells with different colours: green,blue,red and black.
+-- 
+-- Mark the cell that is your favourite.
+--   [green,blue,red,black]
+-- 
+-- Mark the cell that is your favourite.
+--   [green,blue,X,black]
+-- 
+-- Cell number 3 is your favourite!
+--   [green,blue,X,black]
+-- 
+--   lvl0: 
+-- Displays two cells. Which represent dog and cat.
+-- The user is asked which cell represents the dog by flipping it to
+-- black.
+--   What is the dog?
+--  (ORDER DOES NOT MATTER.)
+--       [_,_]
+--    -turns into→
+--   What is the dog?
+--  (ORDER DOES NOT MATTER.)
+--       [X,_]
+-- And same question for cat:
+--   What is the cat?
+--  (ORDER DOES NOT MATTER.)
+--       [_,_]
+--    -turns into→
+--   What is the cat?
+--  (ORDER DOES NOT MATTER.)
+--       [_,X]
+--
+--      Good job!
+-- 
+-- The game then asks: “What is blue?” and the user must select the
+-- cell that represents blue 
+--         WHAT IS BLUE?
+--         (pick ur fav)
+--            [_|X]    (save)
+-- presses (save) and is presented with the same question for red:
+--         WHAT IS RED?
+--       (pick the other)
+--            [X|_]    (save)
+-- presses (save). Computer contratulates you:
+--   You chose LEFT  [X|_] for “red”.
+--   You chose RIGHT [_|X] for “blue”.
+-- 
+--
+--   lvl10: Represent the four values {A,B,C,D} using 4 squares.
+--          WHAT IS A?
+--           [_|X|_|_]
+--          WHAT IS B?
+--           [_|_|_|X]
+--          WHAT IS C?
+--           [_|_|X|_] (save)
+--          WHAT IS D?
+--           [X|_|_|_] (save)
+--
+--   lvl15: Represent the four values {A,B,C,D} using fewer than 4
+-- squares.  Press the minus (-) to remove squares.Can't encode
+-- {A,B,C,D} with: [X|_|_|_], [_|X|_|_], [_|_|X|_], [_|_|_|X].
+-- 
+-- Instead you can represent them using only three cells:
+-- 
+--          WHAT IS A?
+--       (-) [_|_|_|_]
+--
+-- ==PRESSED=(-)==
+--          WHAT IS A?
+--       (-)   [_|_|_]
+--          WHAT IS A? 
+--       (-)   [X|_|_] (save)
+--          WHAT IS B?
+--       (-)   [_|X|_] (save)
+--          WHAT IS C?
+--       (-)   [_|_|X] (save)
+--          WHAT IS D?
+--       (-)   [_|_|_] (save)
+--   
+-- 
+-- Instead must represent the first value A with the board [_,X] and
+-- the second with [X,_]
+-- 
+--   A = [_|_] 
+--   B = [_|X] 
+--   C = [X|_] 
+--   D = [X|X]
+-- 
+--   lvl30: Represent values with certain properties, such that some range 
+-- of cells are ordered, for example if you want to represent a deck of cards
+-- 
+-- Represent cards:
+--   
+
+-- Which cell represents colour:
+--    COLOUR   (-) [_,_]
+--    COLOUR   (-) [-,_]
+--    COLOUR   (-) [-,X]
+-- Which configuration of right cell (that you chose) is "red":
+--    RED      [-,_]
+-- Which configuration of right cell (that you chose) is "black":
+--    BLACK    [-,X]
+-- 
+-- Represent:
+--    HEARTS   [_,_]
+--    DIAMONDS [_,X]
+--    CLUBS    [X,_]
+--    SPADES   [X,X]
+-- 
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE UnicodeSyntax #-}
 

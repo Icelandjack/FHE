@@ -109,7 +109,7 @@ compile (If cond tru fls) = do
       -- current block, we are required to get an up-to-date value for
       -- code that will set up the Phi node.”
       label ← getBlock
-      return (foo, label)
+      pure (foo, label)
 
   true  ← block (tru, if_then)
   false ← block (fls, if_else)
@@ -187,7 +187,7 @@ compile (Arr len var ixf) = mdo
 
   arrLength ← compile len
   arrMem    ← mallocStr arrLength
-  buffer    ← getBuffer("i32") arrMem
+  buffer    ← getBuffer("i32") (Reference arrMem)
 
   jmp loop_1
 
@@ -219,28 +219,45 @@ compile (Arr len var ixf) = mdo
 
   pure (Reference arrMem)
 
--- -- compile (Len (Arr len _)) = do
--- --   compile len
+compile (Len (Arr len _ _)) = do
+  compile len
 
--- compile (Len arr) = do
---   compile arr >>= getLength -- >>= i32toi64
+compile (Len arr) = do
+  compile arr >>= getLength -- >>= i32toi64
 
--- compile (ArrIx arr index) = do
---   array_val ← compile arr
---   index_val ← {- i32toi64 =<< -} compile index
+compile (ArrIx arr index) = do
+  array_val ← compile arr
+  index_val ← {- i32toi64 =<< -} compile index
 
---   buffer   ← getBuffer("i32") array_val
+  buffer   ← getBuffer("i32") array_val
 
---   elt_ptr ← namedInstr "ptr" 
---     (PRINTF "getelementptr i32* %s, i32 %s" buffer index_val)
---   namedInstr "length" (PRINTF "load i32* %s" elt_ptr)
+  elt_ptr ← namedInstr "ptr" 
+    ("getelementptr i32* "%sh%", i32 "%op) buffer index_val
+  namedOp "length" ("load i32* "%sh) elt_ptr
 
+compile _ = error "compile: ..."
 -- compile (Lam n body) = 
 --   undefined 
 
-foobarDef ∷ (([Name], {- t, -} String), CodegenState) → [Integer] → Writer [String] ()
-foobarDef ((args, {- reg, -} returnType), code) xs = do
-  emit ("define "%s%" @foobar("%comma%") {") returnType args'
+returnType ∷ Traversal' [(String, Name)] String
+returnType = _last._1
+
+isArray ∷ [(String, Name)] →  Bool
+isArray = elemOf returnType "%Arr*" 
+
+retType ∷ [(String, Name)] → String
+retType = (^?! returnType)
+
+-- ‘returnType’ is used in THREE definitions! mainDef, foobarDef and
+-- compileExp.
+-- Factor out please.
+foobarDef ∷ ([(String, Name)], CodegenState) → Writer [String] ()
+foobarDef (args, code) = do
+
+  let args'   = [ "%Arr** %out"              | isArray args    ] 
+             ++ [ show ty ++ " " ++ show arg | (ty,arg) ← args ]
+
+  emit ("define "%s%" @foobar("%comma%") {") (retType args) args'
   genBody sortedCode
   emit "}"
 
@@ -252,6 +269,8 @@ foobarDef ((args, {- reg, -} returnType), code) xs = do
 
   genBasicBlock ∷ (String, BasicBlock) → Writer [String] ()
   genBasicBlock (label, basicBlock) = do
+    emit ""
+    emit (string%":") label
     for_ (basicBlock^.instructions) 
       (indented string)
     indented string (basicBlock^.terminator)
@@ -261,67 +280,61 @@ foobarDef ((args, {- reg, -} returnType), code) xs = do
                  & sortOn (view (_2.index'))
                  & map (first show)
 
-  isArray = returnType == "%Arr*"
-  args'   = [ "%Arr** %out"       | isArray    ] 
-         ++ [ "i32 %" ++ show arg | arg ← args ]
-
-mainDef ∷ (([Name], {-t, -} String), CodegenState) → [Integer] → Writer [String] ()
-mainDef ((args, {-reg, -}returnType), code) xs = do
-  let isArray ∷ Bool
-      isArray = returnType == "%Arr*"
-
-      xs' = [ "%Arr** %arrmem"  | isArray ]
-         ++ [ "i32 "  ++ show x | x ← xs  ]
+mainDef ∷ ([(String, Name)], CodegenState) → Writer [String] ()
+mainDef (args, code) = do
+  let args' = [ "%Arr** %arrmem"           | isArray args      ]
+           ++ [ show ty ++ " " ++ show arg | (ty, arg) ← args  ]
 
   emit "define i32 @main(i32 %argc, i8** %argv) {"
 
-  indentedWhen isArray
+  indentedWhen (isArray args)
     "%arrmem = alloca %Arr*"
 
-  indented ("%1 = call "%s%" @foobar("%comma%")") returnType xs'
+  indented ("%1 = call "%s%" @foobar("%comma%")") (retType args) args'
 
-  indentedWhen isArray 
+  indentedWhen (isArray args)
     "%arr = load %Arr** %arrmem"
 
-  indentedWhen isArray 
+  indentedWhen (isArray args)
     "call void @printArr(%Arr* %arr)"
 
-  tell [dispatch returnType,
+  tell [dispatch (retType args),
         "  ret i32 0",
         "}"]
 
--- comp ∶ (Exp a)                 → Codegen String
--- comp ∶ (Exp a → Exp b)         → Codegen String
--- comp ∶ (Exp a → Exp b → Exp c) → Codegen String
+-- comp ∶ (Exp a)                 → Codegen …
+-- comp ∶ (Exp a → Exp b)         → Codegen …
+-- comp ∶ (Exp a → Exp b → Exp c) → Codegen …
 class Comp a where
-  comp ∷ a → Codegen (Op, [Name], Maybe String)
+  comp ∷ a → Codegen ([(String,Name)], Op)
 
 instance Comp (Exp a) where
-  comp ∷ Exp a → Codegen (Op, [Name], Maybe String)
+  comp ∷ Exp a → Codegen ([(String,Name)], Op)
   comp exp = do
     -- Make all variables and binders unique 
     exp' ← makeFresh exp
 
     compiled ← compile exp'
-    pure (compiled, [], Just (showTy exp'))
+    pure ([], compiled)
 
 instance Comp p ⇒ Comp (Exp a → p) where
-  comp ∷ (Exp a → p) → Codegen (Op, [Name], Maybe String)
+  comp ∷ (Exp a → p) → Codegen ([(String,Name)], Op)
   comp partAppliedExp = do
     var ← uniqueVarName "arg"
     let exp = partAppliedExp (Var var)
-    (op, args, ty) ← comp exp 
-    pure (op, var : args, ty)
+    (args, op) ← comp exp 
+    pure (("%Arr*",var) : args, op)
 
-compileExp ∷ Comp a ⇒ a → (([Name], String), CodegenState)
-compileExp exp = runCodegen $ do
-  (reg, args, Just returnType) ← free'd (comp exp)
-  when (returnType == "%Arr*")$ do
-    instr_ ("store %Arr* " %sh% ", %Arr** %out") reg
-
-  terminate ("ret "%s%" "%op) returnType reg
-
-  return (args, returnType)
+compileExp ∷ Comp a ⇒ a → ([(String,Name)], CodegenState)
+compileExp exp = let
+  in runCodegen $ do
+    (args, reg) ← free'd (comp exp)
+    when (elemOf returnType "%Arr*" args)$ do
+      instr_ ("store %Arr* " %sh% ", %Arr** %out") reg
+  
+    terminate ("ret "%s%" "%op) (args ^?! returnType) reg
+  
+    pure args
 
   where
     -- Free pointers in epilogue
@@ -330,18 +343,18 @@ compileExp exp = runCodegen $ do
 
 -- Run
 run ∷ Exp a → IO ()
-run = getOutput [] >=> putStrLn
+run = getOutput >=> putStrLn
 
 runI ∷ Exp Int → IO ()
 runI = run
 
 runRead ∷ Read a ⇒ Exp a → IO a
-runRead exp = read.last.lines <$> getOutput [] exp
+runRead exp = read.last.lines <$> getOutput exp
 
 -- Code
-code ∷ Exp a → IO ()
+code ∷ Comp exp ⇒ exp → IO ()
 code exp = compileExp exp
-  & (foobarDef ?? [])
+  & foobarDef 
   & execWriter
   & traverse_ putStrLn
 
@@ -350,7 +363,7 @@ codeI = code
 
 msg ∷ Comp exp ⇒ exp → IO ()
 msg exp = do
-  getOutput [] exp
+  getOutput exp
 
   system "llc-3.6 -filetype=obj /tmp/foo.ll -o /tmp/foo.o && gcc -o /tmp/foo /tmp/foo.o -L/usr/lib/i386-linux-gnu -lstdc++ && /tmp/foo"
     & void
@@ -358,30 +371,30 @@ msg exp = do
 msgI ∷ Exp Int → IO ()
 msgI = msg
 
--- runPure ∷ Comp exp ⇒ exp → [Integer] → Writer [String] ()
-runPure ∷ Comp exp ⇒ [Integer] → exp → Writer [String] ()
-runPure xs exp = do
+-- To use, run 'msg'
+runPure ∷ Comp exp ⇒ exp → Writer [String] ()
+runPure exp = do
   let result = compileExp exp
 
   tell constants
   tell declarations
   tell definitions
 
-  foobarDef result xs
-  mainDef   result xs
+  foobarDef result 
+  mainDef   result 
 
-getOutput ∷ Comp exp ⇒ [Integer] → exp → IO String
-getOutput xs exp = do
-  runPure xs exp
+getOutput ∷ Comp exp ⇒ exp → IO String
+getOutput exp = do
+  runPure exp
     & execWriter
     & unlines
     & writeFile "/tmp/foo.ll"
 
   -- "-load=/home/baldur/repo/code/libfuncs.so", 
-  foo ← readProcessWithExitCode "lli-3.6" ["/tmp/foo.ll"] "" 
-  case foo of
-    Stdout output → return output
-    _             → return (show foo)
+  readProcessWithExitCode "lli-3.6" ["/tmp/foo.ll"] "" 
+    <&> \case
+      Stdout output → output
+      foo           → show foo
 
 -- allvars ∷ Traversal' (Exp a) Name
 -- allvars f = \case
@@ -398,10 +411,11 @@ getOutput xs exp = do
 --     (\pair → Pair (1 + Fst pair) (Snd pair))
 --     (Pair 0 0)
 
--- otp ∷ Vector (Exp Int) → Vector (Exp Int) → Vector (Exp Int)
--- otp = map₂ (⊕)
+otp ∷ Exp [Int] → Exp [Int] → Exp [Int]
+otp = map₂' Xor
 
 -- _Indexed ∷ Type a ⇒ Iso' (Vector (Exp a)) (Exp [a]) 
 -- _Indexed = iso  (\(Indexed l ixf) → Arr l ixf) $ \case
 --   Arr l ixf → Indexed l ixf
+
 

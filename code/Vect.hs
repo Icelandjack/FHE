@@ -1,35 +1,58 @@
+{-# LANGUAGE OverloadedStrings #-}
+
 module Vect where
 
+import Control.Lens hiding (Indexed)
+import Formatting
+import Formatting.ShortFormatters
+
+import Variable
 import Exp
 import Repr
 import Types
 
--- instance Show (Vector (Exp a)) where
---   show (Indexed l ixf) = "(for x ≔ 0…" ++ show l ++ ", " ++ show (ixf (Var "x")) ++ ")"
+data Vector a where
+  Indexed ∷ Exp Int → (Exp Int → a) → Vector a
+  deriving Functor
 
--- data Vector a where
---   Indexed ∷ Exp Int → (Exp Int → a) → Vector a
---   deriving Functor
+instance FunctorWithIndex (Exp Int) Vector where
+  imap ∷ (Exp Int → a → b) → (Vector a → Vector b)
+  imap f (Indexed ℓ ixf) = 
+    Indexed ℓ (\i → f i (ixf i))
 
--- map₂ ∷ (a → b → c) → Vector a → Vector b → Vector c
--- map₂ f (Indexed len₁ ixf₁) (Indexed len₂ ixf₂) = 
---   Indexed (len₁ ⊔ len₂) (\index → f (ixf₁ index)
---                                     (ixf₂ index))
+instance Show (Vector (Exp a)) where
+  show (Indexed l ixf) = let x = Variable "x" 0 
+    in 
+    formatToString ("(for "%sh%" ≔ 0…"%sh%", "%sh%")")
+      x l (ixf (Var x))
 
--- instance TRepr a ⇒ Repr (Vector a) where
---   type ReprType (Vector a) = [ReprType a]
+map₂ ∷ (a → b → c) → Vector a → Vector b → Vector c
+map₂ f (Indexed len₁ ixf₁) (Indexed len₂ ixf₂) = 
+  Indexed (min' len₁ len₂) (\index → f (ixf₁ index)
+                                       (ixf₂ index))
 
---   toExp ∷ Vector a → Exp [ReprType a]
---   toExp (Indexed l ixf) = Arr l (toExp . ixf)
+map₂'' ∷ (Exp a → Exp b → Exp c) → Vector (Exp a) → Vector (Exp b) → Vector (Exp c)
+map₂'' f (Indexed len₁ ixf₁) (Indexed len₂ ixf₂) = 
+  Indexed (min' len₁ len₂) (\index → f (ixf₁ index)
+                                       (ixf₂ index))
 
---   fromExp ∷ Exp [ReprType a] → Vector a
---   fromExp arr = Indexed (len arr) (\ix → arr <!> ix) 
+map₂' ∷ (Type a, Type b, Type c) 
+      ⇒ (Exp a → Exp b → Exp c) 
+      → Exp [a] → Exp [b] → Exp [c]
+map₂' f xs ys = toExp (map₂'' f (fromExp xs) (fromExp ys))
 
--- len ∷ Type a ⇒ Exp [a] → Exp Int
--- len = Len
+instance TRepr a ⇒ Repr (Vector a) where
+  type ReprType (Vector a) = [ReprType a]
 
--- (<!>) ∷ TRepr exp ⇒ Exp [ReprType exp] → Exp Int → exp
--- arr <!> ix = fromExp (ArrIx arr ix)
+  toExp (Indexed l ixf) = arr l (toExp . ixf)
+
+  fromExp arr = Indexed (len arr) (\ix → arr <!> ix) 
+
+len ∷ Type a ⇒ Exp [a] → Exp Int
+len = Len
+
+(<!>) ∷ TRepr exp ⇒ Exp [ReprType exp] → Exp Int → exp
+arr <!> ix = fromExp (ArrIx arr ix)
 
 -- -- mem₁ ∷ Exp [Int]
 -- -- mem₁ = Arr 10 (Var "mem1" `ArrIx`)
@@ -39,9 +62,9 @@ import Types
 
 -- infixl 5 …
 
--- (…) ∷ Int → Exp Int → Vector (Exp Int)
--- 0…n = Indexed n id
--- 1…n = Indexed n (+1)
+(…) ∷ Int → Exp Int → Vector (Exp Int)
+0…n = Indexed n id
+1…n = Indexed n (+1)
 
 -- -- -- sumFn ∷ Num a ⇒ Vector a → a
 -- -- -- sumFn (Indexed l ixf) = for 0 (l-1) (\i s → s + ixf i)
