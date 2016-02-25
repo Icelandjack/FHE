@@ -1,4 +1,8 @@
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE RebindableSyntax, PatternSynonyms, UnicodeSyntax, LambdaCase, ViewPatterns, ScopedTypeVariables, RecordWildCards, OverloadedStrings #-}
+
+-- http://chrisdone.com/posts/making-ghci-fast 
+-- ghci> :set -fobject-code 
 
 -- Feldspar compiler's input is a core language program represented as
 -- a graph.  This graph is first transformed to an ABSTRACT
@@ -13,13 +17,18 @@
 --    -Target-code-opt→  Symbolic instructions
 --    -Machine-code-gen→ Bit patterns
 
+-- Shrinking reductions = restriction of β-reduction (inlining) to
+-- cases where bound variable is used 0 (dead-code elimination) or one
+-- (linear inlining) times.
+
 module Funcs where
 
+import Data.Kind (type (*))
 import Data.String
 import Data.Char
 import System.Process
 import System.IO
-import Control.Applicative
+import Control.Applicative hiding (some)
 import Data.Maybe
 import Text.Printf
 import Prelude hiding (and)
@@ -38,10 +47,11 @@ import Data.Bifunctor
 import Control.Exception (evaluate)
 
 import GHC.Read
+import Data.Int
 import Test.QuickCheck.Monadic hiding (run)
 import qualified Test.QuickCheck.Monadic as M
-import Data.Data
-import Data.Typeable
+-- import Data.Data
+-- import Data.Typeable
 import Debug.Trace
 
 import Formatting
@@ -57,35 +67,79 @@ import Vect
 import Types
 import Variable
 import Declarations
+import Operators
+
+-- _Constant ∶ Prism' (Exp a) Int
+-- _Constant ∶ Prism' (Exp a) Int8 …?
+
+-- _Constant ∶ Prism' (Exp a) (Dict (a ~ Int),  a)
+-- _Constant ∶ Prism' (Exp a) (Dict (a ~ Int8), a) …?
 
 -- `compile' has to deal with more than just registers so the return
 -- works with operands `Op' that are either references (`Name') or
 -- constants (`ConstTru', `ConstFls', `ConstNum Int').
-compile ∷ Exp a → Codegen Op
-compile (Var var) = do
-  pure (Reference var)
+compile ∷ ∀a. Exp a → Codegen Op
 
-compile (LitI n) = do
-  pure (ConstNum n)
+compile (ArrIx arr index) = do
+  array_val ← compile arr
+  index_val ← {- i32toi64 =<< -} compile index
 
-compile Fls = do
-  pure ConstFls
+  buffer   ← getBuffer("i8") array_val
 
-compile Tru = do
-  pure ConstTru
+  elt_ptr ← namedInstr "ptr" 
+    ("getelementptr i8* "%sh%", i32 "%op) buffer index_val
+  -- namedOp "length" ("load i32* "%sh) elt_ptr
+  namedOp "val" ("load i8* "%sh) elt_ptr
 
-compile (UnOp op _ _ a) = do
-  reg ← compile a
+compile (Arr len var ixf) = mdo
+  entry   ← getBlock
+  loop_1  ← newBlock "arr.loop1"
+  loop_2  ← newBlock "arr.loop2"
+  post    ← newBlock "arr.post"
 
-  compileUnop op reg
+  arrLength ← compile len
+  arrMem    ← mallocStr arrLength
+  buffer    ← getBuffer("i8") (Reference arrMem)
 
-compile (BinOp op _ _ a b) = do
-  reg₁ ← compile a
-  reg₂ ← compile b
+  jmp loop_1
 
-  compileBinop op reg₁ reg₂
+  -- | arr.loop
+  -- Increment from [0…len) 
+  setBlock loop_1
+  i₀  ← φ "i32" (ConstNum8 0,  entry)
+                (Reference i₁, loop_2')
+  i₁  ← incr i₀
 
--- http://www.stephendiehl.com/llvm/#if-expressions
+  keepGoing ← namedOp "slt"
+    ("icmp slt i32 " %sh% ", " %sh) i₀ arrLength
+
+  br keepGoing loop_2 post
+
+  setBlock loop_2 
+
+  ptr ← namedInstr "ptr" 
+    ("getelementptr i8* " %sh% ", i32 " %sh) buffer i₀
+
+  value    ← compile (rename var i₀ ixf)
+  loop_2'  ← getBlock
+
+  ptr ≔ value
+  jmp loop_1
+
+  -- | arr.post
+  setBlock post
+
+  pure (Reference arrMem)
+
+compile (Constant (ScalarType rep) val) = pure $ 
+  case rep of
+    INT8    → ConstNum8 val
+    INT32   → ConstNum32 val
+    BOOL    → case val of
+      True  → ConstTru 
+      False → ConstFls 
+    CHAR    → error "no operand for CHAR"
+
 compile (If cond tru fls) = do
   if_then ← newBlock "if.then"
   if_else ← newBlock "if.else"
@@ -113,34 +167,11 @@ compile (If cond tru fls) = do
 
   true  ← block (tru, if_then)
   false ← block (fls, if_else)
-
-  setBlock if_cont
-  φ (showTy tru) true false
-    <&> Reference
-
--- compile (Pair x y) = do
---   let insNum ∷ String → Int → String → Codegen String
---       insNum pair index reg = 
---         namedInstr "updated" 
---          (PRINTF "insertvalue %%pairi32i32 %s, i32 %s, %d" pair reg index)
-
---       mkPair ∷ String → String → Codegen String
---       mkPair x y = do
---        let initVal = "{i32 undef, i32 undef}"
---        retVal₁ ← insNum initVal 0 x
---        retVal₂ ← insNum retVal₁ 1 y
---        return retVal₂
-
---   val₁  ← compile x
---   val₂  ← compile y
   
---   mkPair val₁ val₂
+  setBlock if_cont
 
--- compile (Fst pair) = do
---   π(0) =<< compile pair
-
--- compile (Snd pair) = do
---   π(1) =<< compile pair
+  φ (showExpType tru) true false
+    <&> Reference
 
 compile (While var condTest body init) = mdo
   -- Create blocks
@@ -155,8 +186,8 @@ compile (While var condTest body init) = mdo
 
   -- TEST
   setBlock while_cond
-  val_1 ← φ "i32" (init_val, entry)
-                  (val_2,    while_body)
+  val_1 ← φ (showExpType init) (init_val, entry)
+                               (val_2,    while_body)
 
   -- When compiling
   --   While "%lam_1" (5 < "%lam_1") ("%lam_1" + 1) 0
@@ -178,244 +209,273 @@ compile (While var condTest body init) = mdo
   -- POST
   setBlock while_post
   pure (Reference val_1)
+    
+compile (Var (name ::: _ty)) = pure $
+  Reference name
 
-compile (Arr len var ixf) = mdo
-  entry   ← getBlock
-  loop_1  ← newBlock "arr.loop1"
-  loop_2  ← newBlock "arr.loop2"
-  post    ← newBlock "arr.post"
-
-  arrLength ← compile len
-  arrMem    ← mallocStr arrLength
-  buffer    ← getBuffer("i32") (Reference arrMem)
-
-  jmp loop_1
-
-  -- | arr.loop
-  -- Increment from [0…len) 
-  setBlock loop_1
-  i₀  ← φ "i32" (ConstNum  0,  entry)
-                (Reference i₁, loop_2')
-  i₁  ← incr i₀
-
-  keepGoing ← namedOp "slt"
-    ("icmp slt i32 " %sh% ", " %sh) i₀ arrLength
-
-  br keepGoing loop_2 post
-
-  setBlock loop_2 
-
-  ptr ← namedInstr "ptr" 
-    ("getelementptr i32* " %sh% ", i32 " %sh) buffer i₀
-
-  value    ← compile (rename var i₀ ixf)
-  loop_2'  ← getBlock
-
-  ptr ≔ value
-  jmp loop_1
-
-  -- | arr.post
-  setBlock post
-
-  pure (Reference arrMem)
-
+-- TODO: Constant fold this before passing to compile.
 compile (Len (Arr len _ _)) = do
   compile len
 
-compile (Len arr) = do
-  compile arr >>= getLength -- >>= i32toi64
+compile (UnOp (Un operator _) a) = do
+  reg ← compile a
+  compileUnop operator reg
 
-compile (ArrIx arr index) = do
-  array_val ← compile arr
-  index_val ← {- i32toi64 =<< -} compile index
+compile (BinOp (Bin operator _) a b) = do
+  reg₁ ← compile a
+  reg₂ ← compile b
 
-  buffer   ← getBuffer("i32") array_val
+  compileBinop operator reg₁ reg₂
 
-  elt_ptr ← namedInstr "ptr" 
-    ("getelementptr i32* "%sh%", i32 "%op) buffer index_val
-  namedOp "length" ("load i32* "%sh) elt_ptr
+-- http://www.stephendiehl.com/llvm/#if-expressions
 
 compile _ = error "compile: ..."
--- compile (Lam n body) = 
---   undefined 
+-- -- compile (Lam n body) = 
+-- --   error "compile (Lam n body)
 
-returnType ∷ Traversal' [(String, Name)] String
-returnType = _last._1
+compileExpression :: forall ty. Exp ty -> CodegenState
+compileExpression exp = execCodegen $ do
+  let returnType :: Type ty
+      returnType = getType' exp
 
-isArray ∷ [(String, Name)] →  Bool
-isArray = elemOf returnType "%Arr*" 
+  reg <- compile exp
 
-retType ∷ [(String, Name)] → String
-retType = (^?! returnType)
+  -- Return array through `out' parameter
+  when (showTy returnType == "%Arr*") $ do
+    instr_ ("store %Arr* " %sh% ", %Arr** %out") reg
 
--- ‘returnType’ is used in THREE definitions! mainDef, foobarDef and
--- compileExp.
--- Factor out please.
-foobarDef ∷ ([(String, Name)], CodegenState) → Writer [String] ()
-foobarDef (args, code) = do
+  terminate ("ret "%s%" "%op) (showTy returnType) reg
 
-  let args'   = [ "%Arr** %out"              | isArray args    ] 
-             ++ [ show ty ++ " " ++ show arg | (ty,arg) ← args ]
+foobarDef :: forall retty. ARGS _ retty -> Writer [String] ()
+foobarDef args = do
+  let exp :: Exp retty
+      exp = getExpression args
 
-  emit ("define "%s%" @foobar("%comma%") {") (retType args) args'
-  genBody sortedCode
-  emit "}"
+      returnType :: Type retty
+      returnType = getType' exp
 
-  where
-  genBody ∷ [(String, BasicBlock)] → Writer [String] ()
-  genBody code = 
-    for_ code 
-      genBasicBlock 
+      argList :: [String]
+      argList = getFormattedArgs args
+        -- | showTy returnType == "%Arr*" 
+        -- = getArgs' (ADDARGS (Variable "out" 0) (Type INT8) args)
+        -- | otherwise 
+        -- = getArgs' args
 
-  genBasicBlock ∷ (String, BasicBlock) → Writer [String] ()
-  genBasicBlock (label, basicBlock) = do
-    emit ""
-    emit (string%":") label
-    for_ (basicBlock^.instructions) 
-      (indented string)
-    indented string (basicBlock^.terminator)
+  emit ("define "%s%" @foobar("%comma%") {") (showTy returnType) argList
+  genBody (compileExpression exp)
+  emit "}" where
 
-  sortedCode ∷ [(String, BasicBlock)]
-  sortedCode = M.toList (code^.blocks)
-                 & sortOn (view (_2.index'))
-                 & map (first show)
+    genBody :: CodegenState -> WriterT [String] Identity ()
+    genBody code = let
+    
+      sortedCode ∷ [(String, BasicBlock)]
+      sortedCode = 
+        M.toList (code^.blocks)
+          & sortOn (view (_2.index'))
+          & map (first show)
+    
+      genBasicBlock ∷ (String, BasicBlock) → Writer [String] ()
+      genBasicBlock (label, basicBlock) = do
+        emit (string%":") label
+        for_ (basicBlock^.instructions) 
+          (indented string)
+        indented string 
+          (basicBlock^.terminator)
+    
+      in for_ sortedCode 
+           genBasicBlock
 
-mainDef ∷ ([(String, Name)], CodegenState) → Writer [String] ()
-mainDef (args, code) = do
-  let args' = [ "%Arr** %arrmem"           | isArray args      ]
-           ++ [ show ty ++ " " ++ show arg | (ty, arg) ← args  ]
+initialiseVars :: ARGS args retTy -> Writer [String] ()
+initialiseVars = \case
+  NOARGS _ -> 
+    pure ()
+
+  ADDARGS var rest -> do
+    initialiseVar (Ex var)
+    initialiseVars rest
+
+initialiseVar :: Ex V -> Writer [String] ()
+initialiseVar (Ex (varName ::: Type varTy)) = case varTy of
+
+  INT8 -> 
+    indented (shown%" = add i8 0, " %shown) varName (8::Int)
+
+  INT32 -> 
+    indented (shown%" = add i32 0, " %shown) varName (32::Int)
+
+  TArr INT8 -> do
+    indented (shown%"_mem  = call i8* @malloc(i32 80000)") varName
+    indented (shown%"  = bitcast i8* "%shown%"_mem to %Arr*") varName varName
+    indented (shown%"_mem2 = call i8* @malloc(i32 80000)") varName
+    indented (shown%"_buf_ptr  = getelementptr %Arr* "%shown%", i32 0, i32 0") varName varName
+      
+    indented (shown%"_len_ptr  = getelementptr %Arr* "%shown%", i32 0, i32 1") varName varName
+    indented ("store i8* "%shown%"_mem2, i8** "%shown%"_buf_ptr") varName varName
+    indented ("store i32 5, i32* "%shown%"_len_ptr") varName 
+      
+    indented ""
+
+    case varName of
+      Id "arg" 2 -> do
+        indented (shown%"_ptr_a = getelementptr i8* "%shown%"_mem2, i32 0") varName varName
+        indented ("store i8 1, i8* " %shown%"_ptr_a") varName 
+        indented (shown%"_ptr_b = getelementptr i8* "%shown%"_mem2, i32 1") varName varName
+        indented ("store i8 2, i8* " %shown%"_ptr_b") varName 
+        indented (shown%"_ptr_c = getelementptr i8* "%shown%"_mem2, i32 2") varName varName
+        indented ("store i8 3, i8* " %shown%"_ptr_c") varName 
+        indented (shown%"_ptr_d = getelementptr i8* "%shown%"_mem2, i32 3") varName varName
+        indented ("store i8 4, i8* " %shown%"_ptr_d") varName 
+        indented ""
+      Id "arg" 3 -> do
+        indented (shown%"_ptr_a = getelementptr i8* "%shown%"_mem2, i32 0") varName varName
+        indented ("store i8 10, i8* " %shown%"_ptr_a") varName 
+        indented (shown%"_ptr_b = getelementptr i8* "%shown%"_mem2, i32 1") varName varName
+        indented ("store i8 20, i8* " %shown%"_ptr_b") varName 
+        indented (shown%"_ptr_c = getelementptr i8* "%shown%"_mem2, i32 2") varName varName
+        indented ("store i8 30, i8* " %shown%"_ptr_c") varName 
+        indented (shown%"_ptr_d = getelementptr i8* "%shown%"_mem2, i32 3") varName varName
+        indented ("store i8 40, i8* " %shown%"_ptr_d") varName 
+  
+  varType -> 
+    error (show varName ++ " " ++ show varType)
+
+mainDef :: ARGS args ty -> WriterT [String] Identity ()
+mainDef args = do
+  let exp :: Exp _
+      exp = getExpression args
+
+      returnType :: Type _
+      returnType = getType' exp
+
+      isArray :: Bool
+      isArray 
+        | Type TArr{} <- returnType 
+        = True
+        | otherwise
+        = False
+
+      argList :: [String]
+      argList = getFormattedArgs args
+        -- | showTy returnType == "%Arr*" 
+        -- = getArgs' (ADDARGS (Variable "out" 0) (Type INT8) args)
+        -- | otherwise 
+        -- = getArgs' args
 
   emit "define i32 @main(i32 %argc, i8** %argv) {"
 
-  indentedWhen (isArray args)
+  initialiseVars args
+
+  indentedWhen isArray
     "%arrmem = alloca %Arr*"
 
-  indented ("%1 = call "%s%" @foobar("%comma%")") (retType args) args'
+  indented ("%1 = call "%s%" @foobar("%comma%")") (showTy returnType) argList
 
-  indentedWhen (isArray args)
+  indentedWhen isArray
     "%arr = load %Arr** %arrmem"
 
-  indentedWhen (isArray args)
+  indentedWhen isArray
     "call void @printArr(%Arr* %arr)"
 
-  tell [dispatch (retType args),
+  tell [dispatch' returnType,
         "  ret i32 0",
         "}"]
 
--- comp ∶ (Exp a)                 → Codegen …
--- comp ∶ (Exp a → Exp b)         → Codegen …
--- comp ∶ (Exp a → Exp b → Exp c) → Codegen …
-class Comp a where
-  comp ∷ a → Codegen ([(String,Name)], Op)
-
-instance Comp (Exp a) where
-  comp ∷ Exp a → Codegen ([(String,Name)], Op)
-  comp exp = do
-    -- Make all variables and binders unique 
-    exp' ← makeFresh exp
-
-    compiled ← compile exp'
-    pure ([], compiled)
-
-instance Comp p ⇒ Comp (Exp a → p) where
-  comp ∷ (Exp a → p) → Codegen ([(String,Name)], Op)
-  comp partAppliedExp = do
-    var ← uniqueVarName "arg"
-    let exp = partAppliedExp (Var var)
-    (args, op) ← comp exp 
-    pure (("%Arr*",var) : args, op)
-
-compileExp ∷ Comp a ⇒ a → ([(String,Name)], CodegenState)
-compileExp exp = let
-  in runCodegen $ do
-    (args, reg) ← free'd (comp exp)
-    when (elemOf returnType "%Arr*" args)$ do
-      instr_ ("store %Arr* " %sh% ", %Arr** %out") reg
-  
-    terminate ("ret "%s%" "%op) (args ^?! returnType) reg
-  
-    pure args
-
-  where
-    -- Free pointers in epilogue
-    free'd ∷ Codegen a → Codegen a
-    free'd = id -- useOutput (traverse_ free) 
-
 -- Run
-run ∷ Exp a → IO ()
+run :: GetArgs a => a -> IO ()
 run = getOutput >=> putStrLn
 
-runI ∷ Exp Int → IO ()
-runI = run
+run8 ∷ Exp Int8 → IO ()
+run8 = run
 
-runRead ∷ Read a ⇒ Exp a → IO a
-runRead exp = read.last.lines <$> getOutput exp
+run32 ∷ Exp Int32 → IO ()
+run32 = run
 
--- Code
-code ∷ Comp exp ⇒ exp → IO ()
-code exp = compileExp exp
-  & foobarDef 
+runRead :: (GetArgs a, Read (Ret a)) => a -> IO (Ret a)
+runRead exp = getOutput exp
+  <&> read.last.lines
+
+code :: GetArgs a => a -> IO ()
+code exp = getArgs exp
+  & foobarDef
   & execWriter
   & traverse_ putStrLn
 
-codeI ∷ Exp Int → IO ()
-codeI = code
+code8 ∷ Exp Int8 → IO ()
+code8 = code
 
-msg ∷ Comp exp ⇒ exp → IO ()
+code88 ∷ (Exp Int8 → Exp Int8) → IO ()
+code88 = code
+
+code888 ∷ (Exp Int8 → Exp Int8 → Exp Int8) → IO ()
+code888 = code
+
+code32 ∷ Exp Int32 → IO ()
+code32 = code
+
+msg :: GetArgs exp => exp -> IO ()
 msg exp = do
   getOutput exp
 
-  system "llc-3.6 -filetype=obj /tmp/foo.ll -o /tmp/foo.o && gcc -o /tmp/foo /tmp/foo.o -L/usr/lib/i386-linux-gnu -lstdc++ && /tmp/foo"
+  system 
+    (intercalate " && " 
+      ["llc-3.6 -filetype=obj /tmp/foo.ll -o /tmp/foo.o", 
+       "gcc -o /tmp/foo /tmp/foo.o -L/usr/lib/i386-linux-gnu -lstdc++", 
+       "/tmp/foo"])
     & void
 
-msgI ∷ Exp Int → IO ()
-msgI = msg
+msg8 ∷ Exp Int8 → IO ()
+msg8 = msg
+
+msg88 ∷ (Exp Int8 → Exp Int8) → IO ()
+msg88 = msg
+
+msg3232 ∷ (Exp Int32 → Exp Int32) → IO ()
+msg3232 = msg
+
+msg888 ∷ (Exp Int8 → Exp Int8 → Exp Int8) → IO ()
+msg888 = msg
+
+msg32 ∷ Exp Int32 → IO ()
+msg32 = msg
 
 -- To use, run 'msg'
-runPure ∷ Comp exp ⇒ exp → Writer [String] ()
-runPure exp = do
-  let result = compileExp exp
+runPure' :: forall a. GetArgs a => a -> Writer [String] ()
+runPure' exp_fn = do
+  let args :: ARGS (Args a) (Ret a)
+      args  = getArgs exp_fn
 
   tell constants
   tell declarations
   tell definitions
 
-  foobarDef result 
-  mainDef   result 
+  foobarDef args
+  mainDef   args
 
-getOutput ∷ Comp exp ⇒ exp → IO String
-getOutput exp = do
-  runPure exp
+getOutput :: GetArgs a => a -> IO String
+getOutput exp_fn = do
+  runPure' exp_fn
     & execWriter
     & unlines
     & writeFile "/tmp/foo.ll"
 
-  -- "-load=/home/baldur/repo/code/libfuncs.so", 
-  readProcessWithExitCode "lli-3.6" ["/tmp/foo.ll"] "" 
-    <&> \case
+  readProcessWithExitCode "lli-3.6" ["/tmp/foo.ll"] "" <&> \case
       Stdout output → output
       foo           → show foo
 
--- allvars ∷ Traversal' (Exp a) Name
--- allvars f = \case
---   Var n  → Var <$> f n
---   LitI i → pure $  LitI i
---   LitB b → pure $  LitB b
---   While n a b c → While <$> f n    <*> allvars f a <*> allvars f b <*> allvars f c
---   Fn₂ a b c d e → Fn₂   <$> pure a <*> pure b      <*> pure c      <*> allvars f d <*> allvars f e
+test :: IO Bool
+test = runRead @(Exp I8) (If Tru 42 0)  
+  <&> (== 42)
 
--- fact ∷ Exp (Int, Int)
--- fact = 
---   while 
---     (\pair → Fst pair :≤: 4) 
---     (\pair → Pair (1 + Fst pair) (Snd pair))
---     (Pair 0 0)
+otpXor :: Exp [I8] -> Exp [I8] -> Exp [I8]
+otpXor xs ys = arr 10 (\i -> xs!i + ys!i)
 
-otp ∷ Exp [Int] → Exp [Int] → Exp [Int]
-otp = map₂' Xor
+map2 :: (GetType a, GetType b, GetType c) 
+     => (Exp a -> Exp b -> Exp c) 
+     -> (Exp [a] -> Exp [b] -> Exp [c])
+map2 (¤) xs ys = arr (Len xs) (\i -> (xs!i) ¤ (ys!i))
 
--- _Indexed ∷ Type a ⇒ Iso' (Vector (Exp a)) (Exp [a]) 
--- _Indexed = iso  (\(Indexed l ixf) → Arr l ixf) $ \case
---   Arr l ixf → Indexed l ixf
+add :: Exp I8 -> _
+add = (+)
 
-
+foo :: forall a. [a] -> forall b. [b] -> Int
+foo xs ys = length xs + length ys

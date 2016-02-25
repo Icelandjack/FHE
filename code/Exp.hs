@@ -3,349 +3,401 @@
 module Exp where
 
 import Text.Printf
-import Control.Applicative
-import Data.Functor.Identity
-import Data.Bits
-import GHC.Generics hiding (from, to)
 import Numeric.Natural
-import Data.Bifunctor
-
-import Unsafe.Coerce
-
-import Data.Bifoldable
-import Control.Lens
-import Bound
-  
+import Data.Int
 import Types
 import Variable
+import Operators
+import Data.Bits (xor)
+import Data.Kind (type (*))
+import Control.Lens (Traversal', maximumOf)
 
--- Constants
-pattern Tru ∷ b ~ Bool ⇒ Exp b
-pattern Tru = LitB True
+import Control.Lens
 
-pattern Fls ∷ b ~ Bool ⇒ Exp b
-pattern Fls = LitB False
+-- | AST
+data Exp a where
+  Constant ∷ ScalarType a → a → Exp a
 
--- Unary Operators
-data UnOp a b where
-  OpNot ∷ UnOp Bool Bool
-  OpNeg ∷ UnOp Int  Int 
-
-deriving instance Eq   (UnOp a b)
-deriving instance Ord  (UnOp a b)
-
-instance Show (UnOp a b) where
-  show = \case
-    OpNot → "¬"
-    OpNeg → "-"
-
-pattern Not ∷ (a → b) ~ (Bool → Bool) ⇒ Exp a → Exp b
-pattern Not b       ← UnOp OpNot not TBool b where
-        -- Not Tru     = Fls
-        -- Not Fls     = Tru
-        -- Not (Not a) = a
-        Not b       = UnOp OpNot not TBool b
-
-pattern Negate ∷ (a → b) ~ (Int → Int) ⇒ Exp a → Exp b
-pattern Negate a        ← UnOp OpNeg negate TInt a where
-        -- Negate (LitI b) = LitI (negate b)
-        Negate a        = UnOp OpNeg negate TInt a
-
--- Binary Operators
-data BinOp a b c where
-  -- Arithmetic
-  OpAdd ∷ BinOp Int Int Int 
-  OpSub ∷ BinOp Int Int Int
-  OpMul ∷ BinOp Int Int Int 
-
-  -- Relational
-  OpEqual         ∷ BinOp Int Int Bool
-  OpNotEqual      ∷ BinOp Int Int Bool
-  OpLessThan      ∷ BinOp Int Int Bool
-  OpLessThanEq    ∷ BinOp Int Int Bool
-  OpGreaterThan   ∷ BinOp Int Int Bool
-  OpGreaterThanEq ∷ BinOp Int Int Bool
-
-  -- Logical
-  OpAnd ∷ BinOp Bool Bool Bool
-  OpOr  ∷ BinOp Bool Bool Bool
-  OpXor ∷ BinOp Int  Int  Int
-
-deriving instance Eq   (BinOp a b c)
-deriving instance Ord  (BinOp a b c)
-
-instance Show (BinOp a b c) where
-  show = \case
-    OpAdd           → "+"
-    OpSub           → "-"
-    OpMul           → "*"
-    OpEqual         → "="
-    OpNotEqual      → "≠"
-    OpLessThan      → "<"
-    OpLessThanEq    → "≤"
-    OpGreaterThan   → ">"
-    OpGreaterThanEq → "≥"
-    OpAnd           → "∧"
-    OpOr            → "∨"
-    OpXor           → "⊕"
-
-pattern Add ∷ (a → b → c) ~ (Int → Int → Int) ⇒ Exp a → Exp b → Exp c
-pattern Add a        b        ← BinOp OpAdd (+) TInt a b where
-        -- Add (LitI a) (LitI b) = LitI (a + b)
-        Add a        b        = BinOp OpAdd (+) TInt a b
-
-pattern Sub ∷ (a → b → c) ~ (Int → Int → Int) ⇒ Exp a → Exp b → Exp c
-pattern Sub a        b        ← BinOp OpSub (-) TInt a b where
-        -- Sub (LitI a) (LitI b) = LitI (a - b)
-        Sub a        b        = BinOp OpSub (-) TInt a b
-
-pattern Mul ∷ (a → b → c) ~ (Int → Int → Int) ⇒ Exp a → Exp b → Exp c
-pattern Mul a b               ← BinOp OpMul (*) TInt a b where
-        -- Mul (LitI a) (LitI b) = LitI (a * b)
-        Mul a b               = BinOp OpMul (*) TInt a b
-
-pattern Equal ∷ (a → b → c) ~ (Int → Int → Bool) ⇒ Exp a → Exp b → Exp c
-pattern Equal a        b        ← BinOp OpEqual (==) TBool a b where
-        -- Equal (LitI a) (LitI b) = LitB (a == b)
-        Equal a        b        = BinOp OpEqual (==) TBool a b
-
-pattern NotEqual ∷ (a → b → c) ~ (Int → Int → Bool) ⇒ Exp a → Exp b → Exp c
-pattern NotEqual a        b        ← BinOp OpNotEqual (/=) TBool a b where
-        -- NotEqual (LitI a) (LitI b) = LitB (a /= b)
-        NotEqual a        b        = BinOp OpNotEqual (/=) TBool a b
-
-pattern LessThan ∷ (a → b → c) ~ (Int → Int → Bool) ⇒ Exp a → Exp b → Exp c
-pattern LessThan a        b        ← BinOp OpLessThan (<) TBool a b where
-        -- LessThan (LitI a) (LitI b) = LitB (a < b)
-        LessThan a        b        = BinOp OpLessThan (<) TBool a b
-
-pattern LessThanEq ∷ (a → b → c) ~ (Int → Int → Bool) ⇒ Exp a → Exp b → Exp c
-pattern LessThanEq a        b        ← BinOp OpLessThanEq (<=) TBool a b where
-        -- LessThanEq (LitI a) (LitI b) = LitB (a <= b)
-        LessThanEq a        b        = BinOp OpLessThanEq (<=) TBool a b
-
-pattern GreaterThan ∷ (a → b → c) ~ (Int → Int → Bool) ⇒ Exp a → Exp b → Exp c
-pattern GreaterThan a        b        ← BinOp OpGreaterThan (>) TBool a b where
-        -- GreaterThan (LitI a) (LitI b) = LitB (a > b)
-        GreaterThan a        b        = BinOp OpGreaterThan (>) TBool a b
-
-pattern GreaterThanEq ∷ (a → b → c) ~ (Int → Int → Bool) ⇒ Exp a → Exp b → Exp c
-pattern GreaterThanEq a        b        ← BinOp OpGreaterThanEq (>=) TBool a b where
-        -- GreaterThanEq (LitI a) (LitI b) = LitB (a >= b)
-        GreaterThanEq a        b        = BinOp OpGreaterThanEq (>=) TBool a b
-
-pattern And ∷ (a → b → c) ~ (Bool → Bool → Bool) ⇒ Exp a → Exp b → Exp c
-pattern And a        b        ← BinOp OpAnd (&&) TBool a b where
-        -- And (LitB a) (LitB b) = LitB (a && b)
-        And a        b        = BinOp OpAnd (&&) TBool a b
-
-pattern Or ∷ (a → b → c) ~ (Bool → Bool → Bool) ⇒ Exp a → Exp b → Exp c
-pattern Or a        b        ← BinOp OpOr (||) TBool a b where
-        -- Or (LitB a) (LitB b) = LitB (a || b)
-        Or a        b        = BinOp OpOr (||) TBool a b
-
-pattern Xor ∷ (a → b → c) ~ (Int → Int → Int) ⇒ Exp a → Exp b → Exp c
-pattern Xor a        b        ← BinOp OpXor xor TInt a b where
-        -- Xor (LitI a) (LitI b) = LitI (xor a b)
-        Xor a        b        = BinOp OpXor xor TInt a b
-
--- 
-
-data Exp τ where
-  LitI ∷ Int  → Exp Int
-  LitB ∷ Bool → Exp Bool
-
-  If  ∷ Exp Bool → Exp τ → Exp τ → Exp τ
+  Var ∷ V a → Exp a
 
   -- Operators
-  UnOp  ∷ UnOp  a b   → (a → b)     → TypeRep b → (Exp a → Exp b)
-  BinOp ∷ BinOp a b c → (a → b → c) → TypeRep c → (Exp a → Exp b → Exp c)
+  -- ConOp ∷ Construct a     → Exp a
+  UnOp  ∷ Unary   a b     → (Exp a → Exp b)
+  BinOp ∷ Binary  a b c   → (Exp a → Exp b → Exp c)
+  TerOp ∷ Ternary a b c d → (Exp a → Exp b → Exp c → Exp d)
 
-  -- While ∷ (Exp s → Exp Bool) → (Exp s → Exp s) → Exp s → Exp s
-  While ∷ Name → Exp Bool → Exp s → Exp s → Exp s
+  -- Var ∷ GetType a ⇒ Name → Exp a
+  -- Lam ∷ Name → Exp b → Exp (a → b)
+  -- App ∷ Exp (a → b) → Exp a → Exp b
 
-  -- Arr   ∷ Type a ⇒ Exp Int → (Exp Int → Exp a) → Exp [a]
-  Arr   ∷ Type a ⇒ Exp Int → Name → Exp a → Exp [a]
-  Len   ∷ Type a ⇒ Exp [a] → Exp Int
-  ArrIx ∷ Type a ⇒ Exp [a] → Exp Int → Exp a
+------------------------------------------------------------------------
+-- Pattern Synonym Sugar
+------------------------------------------------------------------------
 
-  Pair  ∷ (Type a, Type b) ⇒ Exp a → Exp b → Exp (a, b)
-  Fst   ∷ Exp (a, b) → Exp a
-  Snd   ∷ Exp (a, b) → Exp b
+-- pattern Var ∷ () ⇒ GetType t ⇒ Name → Exp t
+-- pattern Var name ← ConOp (Con (VarOp (VAR name)) _) where
+--         Var name = ConOp (Con (VarOp (VAR name)) )
 
-  Var ∷ Name → Exp τ
-  Lam ∷ Name → Exp b → Exp (a → b)
-  App ∷ Exp (a → b) → Exp a → Exp b
+-- var :: GetType a => a -> Exp a
+-- var a = ConOp (Con (VarOp (V' @_ getType "args" 42)) a)
 
-while ∷ (Exp s → Exp Bool) → (Exp s → Exp s) → Exp s → Exp s
-while cond loop init = While (Lambda n) condBody loopBody init where
-  n        = 1 + max (maxLam condBody) (maxLam loopBody)
-  condBody = cond (Var (Lambda n))
-  loopBody = loop (Var (Lambda n))
+-- pattern Var :: () => GetType t => VAR t -> Exp t
+-- pattern Var :: VAR' t -> Exp t
+-- pattern Var name ← ConOp (Con (VarOp name) _) where
+--         Var name = 
+-- --         Var name = ConOp (Con (VarOp name) )
 
-arr ∷ Type a ⇒ Exp Int → (Exp Int → Exp a) → Exp [a]
-arr len ixf = Arr len (Lambda n) body where
-  n    = 1 + maxLam body
-  body = ixf (Var (Lambda n))
+-- Shorthands for operators
+unaryOp ∷ (GetType a, GetType b) 
+        ⇒ UnOp a b 
+        → (a → b) 
+        → (Exp a → Exp b)
+unaryOp op (¬) = UnOp (Un op (¬))
+                              
+binaryOp ∷ (GetType a, GetType b, GetType c) 
+         ⇒ BinOp a b c 
+         → (a → b → c) 
+         → (Exp a → Exp b → Exp c)
+binaryOp op (•) = BinOp (Bin op (•))
 
-maxLam ∷ Exp a → Natural
-maxLam = \case
-  Var{}                 → 0
-  LitI{}                → 0
-  App a b               → maxLam a `max` maxLam b
-  UnOp  _ _ _ a         → maxLam a
-  BinOp _ _ _ a b       → maxLam a `max` maxLam b
+-- -- I'm not sure what the fuck is going on right now.
+pattern ANum ∷ GetNumber t ⇒ Num t ⇒ t → Exp t
+pattern ANum i ← Constant HasNum i where
+        ANum i = Constant getScalarAsNumber i
 
-  -- Binding constructs
-  Lam   (VarId n) _     → n 
-  While (VarId n) _ _ _ → n 
-  Arr _ (VarId n) _     → n
+pattern ConstInt8 ∷ () ⇒ (a ~ Int8) ⇒ a → Exp a
+pattern ConstInt8 i₈ = Constant (ScalarType (TScalar (TNumber TInt8))) i₈
 
-  Pair a b              → maxLam a `max` maxLam b
-  Fst a                 → maxLam a
-  Snd a                 → maxLam a
+pattern ConstInt32 ∷ () ⇒ (a ~ Int32) ⇒ a → Exp a
+pattern ConstInt32 i₃₂ = Constant (ScalarType (TScalar (TNumber TInt32))) i₃₂
 
-  -- Arrays
-  Len arr               → maxLam arr
-  ArrIx arr ix          → maxLam arr `max` maxLam ix
+pattern ConstBool ∷ () ⇒ (a ~ Bool) ⇒ a → Exp a
+pattern ConstBool bool = Constant (ScalarType (TScalar (TNotNum TBool))) bool
 
-  a                     → error ("maxLam: ") -- ++ show a)
+pattern ConstChar ∷ () ⇒ (a ~ Char) ⇒ a → Exp a
+pattern ConstChar ch = Constant (ScalarType (TScalar (TNotNum TChar))) ch
 
+pattern Tru ∷ () ⇒ (a ~ Bool) ⇒ Exp a
+pattern Tru = Constant (ScalarType (TScalar (TNotNum TBool))) True
+
+pattern Fls ∷ () ⇒ (a ~ Bool) ⇒ Exp a
+pattern Fls = Constant (ScalarType (TScalar (TNotNum TBool))) False
+
+pattern Not ∷ () ⇒ (a ~ Bool) ⇒ Exp a → Exp Bool
+pattern Not b       ← UnOp (Un OpNot _) b where
+        Not = \case
+          Tru         → Fls
+          Not Fls     → Tru
+          Not (Not b) → Fls
+          Not b       → unaryOp OpNot not b
+        
+equal ∷ GetScalar a ⇒ Exp a → Exp a → Exp Bool
+equal = binaryOp (OpEqual getScalar) (==)
+
+notEqual ∷ GetScalar a ⇒ Exp a → Exp a → Exp Bool
+notEqual = binaryOp (OpNotEqual getScalar) (/=)
+
+lessThan ∷ GetScalar a ⇒ Exp a → Exp a → Exp Bool
+lessThan = binaryOp (OpLessThan getScalar) (<)
+
+lessThanEq ∷ GetScalar a ⇒ Exp a → Exp a → Exp Bool
+lessThanEq = binaryOp (OpLessThanEq getScalar) (<=)
+
+greaterThan ∷ GetScalar a ⇒ Exp a → Exp a → Exp Bool
+greaterThan = binaryOp (OpGreaterThan getScalar) (>)
+
+greaterThanEq ∷ GetScalar a ⇒ Exp a → Exp a → Exp Bool
+greaterThanEq = binaryOp (OpGreaterThanEq getScalar) (>=)
+
+pattern If ∷ () ⇒ GetType a ⇒ Exp Bool → Exp a → Exp a → Exp a
+pattern If cond t e ← TerOp (Ter OpIf _) cond t e where
+        If = TerOp (Ter OpIf (\b x y → if b then x else y)) 
+
+-- pattern (:×:) ∷ () ⇒ (GetType a, GetType b, GetType t, t ~ (a, b)) ⇒ Exp a → Exp b → Exp t
+pattern a :×: b ← BinOp (Bin OpPair _)   a b where
+        a :×: b = BinOp (Bin OpPair (,)) a b
+
+-- pattern Fst ∷ (GetScalar x, GetScalar y) ⇒ (GetType x, GetType y, pair ~ (x, y)) ⇒ Exp pair → Exp x
+pattern 
+  Fst pair ← UnOp (Un OpFst _)   pair where
+  Fst pair = UnOp (Un OpFst fst) pair
+
+-- pattern Snd ∷ () ⇒ (pair ~ (x, y)) ⇒ Exp pair → Exp y
+pattern 
+  Snd pair ← UnOp (Un OpSnd _)   pair where
+  Snd pair = UnOp (Un OpSnd snd) pair
+
+-- While ∷ GetType s ⇒ Name → Exp Bool → Exp s → Exp s → Exp s
+pattern
+  While ∷ () 
+        ⇒ (GetType s, bool ~ Bool) 
+        ⇒ Id → Exp bool → Exp s → Exp s → Exp s
+pattern
+  While name cond init body ← TerOp (Ter (OpWhile name) _) cond init body where
+  While name                = TerOp (Ter (OpWhile name) (error "while"))
+
+-- -- Len ∷ GetType a ⇒ Exp [a] → Exp Int32
+pattern 
+  Len ∷ () ⇒ (GetType [a], as ~ [a], t ~ Int32) 
+      ⇒ Exp as → Exp t
+pattern 
+  Len xs ← UnOp (Un OpLen _)                     xs where
+  Len xs = UnOp (Un OpLen (fromIntegral.length)) xs
+
+-- Arr ∷ GetType a ⇒ Exp Int32 → Name → Exp a → Exp [a]
+pattern 
+  Arr ∷ () 
+      ⇒ (GetType a, as ~ [a])
+      ⇒ Exp Int32 → Id → Exp a → Exp as
+pattern 
+  Arr len name body ← BinOp (Bin (OpArr name) _) len body where
+  Arr len name body = BinOp (Bin (OpArr name) (error "arr")) len body
+
+-- ArrIx ∷ GetType a ⇒ Exp [a] → Exp Int32 → Exp a
+(!) :: GetType a => Exp [a] -> Exp Int32 -> Exp a
+(!) = ArrIx
+
+pattern 
+  ArrIx ∷ () ⇒ GetType a
+        ⇒ Exp [a] → Exp Int32 → Exp a
+pattern 
+  ArrIx xs index ← BinOp (Bin OpArrIx _) xs index where
+  ArrIx xs index = BinOp (Bin OpArrIx (\xs i → xs !! fromIntegral i)) xs index
+
+------------------------------------------------------------------------
+-- Instances                                                          --
+------------------------------------------------------------------------
 instance Show (Exp a) where
   show ∷ Exp a → String
   show = \case
-    LitI i           → show i
-    LitB False       → "fls"
-    LitB True        → "tru"
-    If c t e         → printf "(if %s %s %s)" (show c) (show t) (show e)
+    Tru →
+      "tru"
+    Fls →
+      "fls"
 
-    UnOp  op _ _ x   → printf "%s(%s)" (show op) (show x)
-    BinOp op _ _ x y → printf "(%s %s %s)" (show x) (show op) (show y)
+    While n c b i → 
+      printf "while [%s = %s] (%s) { %s }" (show n) (show i) (show c) (show b)
+    Arr l n ixf → 
+      printf "(%s for %s in 0…%s)" (show ixf) (show n) (show l)
 
-    Arr l n ixf      → printf "(%s for v%s in 0…%s)" (show ixf) (show n) (show l)
-    Len x            → printf "len(%s)" (show x)
-    ArrIx arr i      → printf "%s[%s]" (show arr) (show i)
-    Pair x y         → printf "⟨%s, %s⟩" (show x) (show y)
-    Fst pair         → printf "fst(%s)" (show pair)
-    Snd pair         → printf "snd(%s)" (show pair)
+    -- Constant 42 of type "Int8"  should be displayed: 42₈
+    -- Constant 42 of type "Int32" should be displayed: 42₃₂
 
-    Var n            → show n
-    App a b          → printf "%s · %s" (show a) (show b)
-    Lam n body       → printf "(%s ↦ %s)" (show n) (show body)
+    --[TODO] For some reason this no longer works in 8.1, wait I don't
+    -- even understand what I was doing since I changed so much stuff, meh
+    -- Constant (ScalarType ty @ IsShow) exp → 
+    Constant (ScalarType ty) exp → 
+      show exp ++ subscript ty
+
+    UnOp op x → 
+      printf "%s(%s)" (show op) (show x)
+
+    BinOp op x y → 
+      printf "(%s %s %s)" (show x) (show op) (show y)
+
+    TerOp op x y z →
+      printf "(%s %s %s %s)" (show op) (show x) (show y) (show z)
+
+--     -- ArrIx arr i      → printf "%s[%s]" (show arr) (show i)
+
+    Var var → show var
+    -- var@(ConOp (Con (VarOp a) b)) -> show a ++ show (getType @a)
+--     -- App a b          → printf "%s · %s" (show a) (show b)
+--     -- Lam n body       → printf "(%s ↦ %s)" (show n) (show body)
     
-    While n c b i   → printf "while [%s = %s] (%s) { %s }" (show n) (show i) (show c) (show b)
-    _               → undefined 
+    _               → error "instance Show (Exp a)"
 
-instance Num (Exp Int) where
-  (+) ∷ Exp Int → Exp Int → Exp Int
-  (+) = Add
+instance GetNumber num ⇒ Num (Exp num) where
+  (+) ∷ Exp num → Exp num → Exp num
+  ANum 0 + y      = y
+  x      + ANum 0 = x
+  -- ANum a + ANum b = ANum (a + b)
+  x      + y      = binaryOp (OpAdd getNumber) (+) x y
 
-  (-) ∷ Exp Int → Exp Int → Exp Int
-  (-) = Sub
+  (-) ∷ Exp num → Exp num → Exp num
+  x      - ANum 0 = x
+  ANum 0 - y      = negate y
+  ANum a - ANum b = ANum (a - b)
+  a      - b      = binaryOp (OpSub getNumber) (-) a b
 
-  (*) ∷ Exp Int → Exp Int → Exp Int
-  (*) = Mul
+  (*) ∷ Exp num → Exp num → Exp num
+  ANum 0 * _      = 0
+  ANum 1 * y      = y
+  _      * ANum 0 = 0
+  x      * ANum 1 = x
+  ANum a * ANum b = ANum (a * b)
+  a      * b      = binaryOp (OpMul getNumber) (*) a b
 
-  negate ∷ Exp Int → Exp Int
-  negate = Negate
+  negate ∷ Exp num → Exp num
+  negate (ANum i) = ANum (negate i)
+  negate i        = unaryOp (OpNeg getNumber) negate i
 
-  fromInteger ∷ Integer → Exp Int
-  fromInteger i = LitI (fromInteger i)
+  fromInteger ∷ Integer → Exp num
+  fromInteger = ANum . fromInteger
 
--- The types of the following type synonyms aren't
---   pattern Tru ∷ Exp Bool
---   pattern Add ∷ Exp Int → Exp Int → Exp Int
--- because of https://downloads.haskell.org/~ghc/latest/docs/html/users_guide/syntax-extns.html#idp23521760
--- See trac issue #10405.
+  abs = error "abs"
+  signum = error "signum"
 
--- -- pattern Fst ∷ (a → b) ~ ((Int, Int) → Int) ⇒ Exp a → Exp b
--- -- pattern Fst x ← Fn₁ "fst" (TPair TInt TInt :→: TInt) _   x where
--- --         Fst x = Fn₁ "fst" (TPair TInt TInt :→: TInt) fst x where
+------------------------------------------------------------------------
+-- Higher-Order Interface                                             --
+------------------------------------------------------------------------
 
--- -- pattern Snd ∷ (a → b) ~ ((Int, Int) → Int) ⇒ Exp a → Exp b
--- -- pattern Snd x ← Fn₁ "snd" (TPair TInt TInt :→: TInt) _   x where
--- --         Snd x = Fn₁ "snd" (TPair TInt TInt :→: TInt) snd x where
+while' ∷ GetType s ⇒ (Exp s → Exp Bool) → (Exp s → Exp s) → Exp s → Exp s
+while' cond loop init = While (Lambda n) condBody loopBody init where
+  n        = 1 + max (maxLam condBody) (maxLam loopBody)
+  condBody = cond (Var (Lambda2 n))
+  loopBody = loop (Var (Lambda2 n))
 
-min' ∷ Exp Int → Exp Int → Exp Int
-min' a b = If (LessThanEq a b) a b
+arr ∷ GetType a ⇒ Exp Int32 → (Exp Int32 → Exp a) → Exp [a]
+arr len ixf = Arr len (Lambda n) body where
+  n    = 1 + maxLam body
+  body = ixf (Var (Lambda2 n))
 
--- swap ∷ Exp (Int, Int) → Exp (Int, Int)
--- swap (Pair a b) = Pair b a
--- swap xs         = Pair (Snd xs) (Fst xs)
+maxLam ∷ Exp a → Natural
+maxLam = \case
+  -- Binding constructs, variables and constants 
+  -- Lam   (VarId n) _     → n 
+  While (VarId n) _ _ _ → n 
+  Arr _ (VarId n) _     → n
+  -- Var{}                 → 0
+  Constant{}            → 0
 
--- -- (⊕) = Xor
--- -- (∧) = And
+  -- Functions
+  UnOp  _ a             → maxLam a
+  BinOp _ a b           → maxLam a `max` maxLam b
+  TerOp _ a b c         → maxLam a `max` maxLam b `max` maxLam c 
 
-showTy ∷ Exp a → String
-showTy = showTypeRep . getTy
+  -- App a b            → maxLam a `max` maxLam b
 
-getTy ∷ Exp a → TypeRep a
-getTy = \case
-  LitI{}             → typeRep
-  LitB{}             → typeRep
-  If _ e _           → getTy e
-  Var{}              → error "Can't conjure up a type."
-  UnOp op _ res _    → res
-  BinOp op _ res _ _ → res
-  Len{}              → TInt
-  ArrIx arr _        → case getTy arr of
-    TArr a → a
-  Pair a b           → TPair (getTy a) (getTy b)
-  Fst a              → case getTy a of
-    TPair a b → a
-  Snd a              → case getTy a of
-    TPair a b → b
-  While _ _ a b      → getTy a
-  Arr _ _ ixf        → typeRep
+  -- Arrays
+  -- ArrIx arr ix          → maxLam arr `max` maxLam ix
 
--- -- renameVar ∷ Name → Name → 
+  _                     → error ("maxLam: ")
 
--- eval ∷ Exp a → a
--- eval = \case
---   LitI a   → a
---   LitB b   → b
---   Not b    → not (eval b)
---   Pair a b → (eval a, eval b)
---   Fst a    → fst (eval a)
---   Snd a    → snd (eval a)
---   Add a b  → eval a + eval b
---   a :≤: b  → eval a <= eval b
---   And a b  → eval a && eval b
---   Mul a b  → eval a * eval b
---   Xor a b  → xor (eval a) (eval b)
---   If c a b 
---     | eval c    → eval a
---     | otherwise → eval b
---   -- Arr len ixf → let
---   --   ℓ  = eval len
---   --   is = [0..ℓ-1]
---   --   in [ eval (ixf (LitI x)) | x ← is ]
---   a → error ("ERROR: " ++ show a)
+-- Predefined functions
+min' ∷ GetScalar a ⇒ Exp a → Exp a → Exp a
+min' a b = If (lessThan a b) a b
 
--- {-
--- λ ∷ (Exp a → Exp b) → Exp (a → b)
--- λ f = Lam (Lambda n) body where
---   n    = 1 + maxLam body
---   body = f (Var (Lambda n))
+getType' ∷ Exp ty → Type ty
+getType' = \case
+  Constant (ScalarType scalar) _ → 
+    Type scalar
 
--- λ₂ ∷ (Exp a → Exp b → Exp c) → Exp (a → b → c)
--- λ₂ f = λ $ \x → 
---        λ $ \y → f x y 
+  UnOp  Un{}  _     → getType
+  BinOp Bin{} _ _   → getType
+  TerOp Ter{} _ _ _ → getType
+  
+  -- Var{} → 
+  --   getType
 
--- λ₃ ∷ (Exp a → Exp b → Exp c → Exp d) → Exp (a → b → c → d)
--- λ₃ f = λ $ \x → 
---        λ $ \y → 
---        λ $ \z → f x y z
+showExpType ∷ Exp ty → String
+showExpType = showTy . getType'
 
--- (·) = App
--- -}
+opXor :: Exp Int8 -> Exp Int8 -> Exp Int8
+opXor = binaryOp OpXor xor
 
-instance HasVars (Exp a) (Exp a) Natural Natural where
-  var ∷ Traversal (Exp a) (Exp a) Natural Natural
-  var f = \case
-    Var v  → Var <$> var f v
+type ARGS = ARGS' Type 
 
-    LitI i → pure (LitI i)
-    LitB b → pure (LitB b)
+data ARGS' f types retTy where
+  NOARGS  :: Exp retTy                 -> ARGS' f '[]    retTy
+  ADDARGS :: V x -> ARGS' f xs retTy -> ARGS' f (x:xs) retTy
+-- getExpression :: ARGS types retTy -> Exp retTy
+-- argsNAME :: Traversal' (ARGS types retTy) (Ex VAR)
+-- foo :: Traversal' (ARGS types retTy) (Ex VAR)
+-- getArgs' :: ARGS types retTy -> [Ex Type]
+-- argsName :: Traversal' (ARGS types retTy) Name
 
-    If a b c → If <$> traverseOf var f a <*> traverseOf var f b <*> traverseOf var f c
+-- getArgs ::                           (Exp ret)                   -> ARGS '[] ret
+-- getArgs :: (GetType a)            => (Exp a -> Exp ret)          -> ARGS '[a] ret
+-- getArgs :: (GetType a, GetType b) => (Exp a -> Exp b -> Exp ret) -> ARGS '[a,b] ret
+-- 
+-- >>> getArgs ((+) @(Exp I8))
+-- (%arg_1 : i8), (%arg_0 : i8), (NOARGS (%arg_1 +₈ %arg_0))
+-- 
+-- TODO: Reverse indices.
+class GetArgs a where
+  type family Args a :: [*]
+  type family Ret  a :: *
+
+  getArgs :: a -> ARGS (Args a) (Ret a)
+
+instance GetArgs (Exp a) where
+  type Args (Exp _) = '[]
+  type Ret  (Exp a) = a
+
+  getArgs :: Exp a -> ARGS '[] a
+  getArgs = NOARGS
+
+instance (GetType a, GetArgs rest) => GetArgs (Exp a -> rest) where
+  type Args (Exp a -> rest) = a : Args rest
+  type Ret  (Exp _ -> rest) = Ret rest
+
+  getArgs :: (Exp a -> rest) -> ARGS (a : Args rest) (Ret rest)
+  getArgs exp_fn = let
+    i = case maximumOf (argsId.idNat) restArgs of
+          Nothing -> 0
+          Just n  -> 1 + n
+
+    argument :: V a
+    argument = Id "arg" i ::: getType
+
+    rest :: rest
+    rest = exp_fn (Var argument)
+
+    restArgs :: ARGS (Args rest) (Ret rest)
+    restArgs = getArgs rest
+    
+    in ADDARGS argument restArgs
+
+getExpression :: ARGS types retTy -> Exp retTy
+getExpression = \case
+  NOARGS exp     -> exp
+  ADDARGS _ rest -> getExpression rest
+
+ex :: (forall x. f x -> r) -> (Ex f -> r)
+ex g (Ex fx) = g fx
+
+-- argsNAME :: Traversal' (ARGS types retTy) Id
+-- argsNAME f = \case
+--   NOARGS exp -> 
+--     pure (NOARGS exp)
+
+--   ADDARGS (Id varName i ::: varTy) rest ->  -- do
+
+    -- let u :: Ex V
+    --     u = Ex (N varName i ::: varTy)
+
+    -- -- ex :: Ex V <- f u
+
+    -- return (ADDARGS ) -- ADDARGS <$> (VAR ty <$> f name) <*> argsName f rest
+
+getFormattedArgs :: ARGS types retTy -> [String]
+getFormattedArgs = \case
+  NOARGS  exp -> 
+    []
+
+  ADDARGS (id ::: ty) rest -> 
+    (showTy ty ++ " " ++ show id) : getFormattedArgs rest
+
+argsId :: Traversal' (ARGS types retTy) Id
+argsId f = \case
+  NOARGS exp -> 
+    pure (NOARGS exp)
+
+  ADDARGS (id ::: ty) rest ->
+    ADDARGS 
+      <$> (f id <&> \id' -> id' ::: ty)
+      <*> argsId f rest
+
+instance Show (ARGS types retTy) where
+  show (NOARGS exp) = 
+    "(NOARGS " -- ++ show exp ++ ")"
+
+  -- show (ADDARGS name ty rest) = 
+  --   "(" ++ show name ++ " : " ++ showTy ty ++ ")" ++ ", " ++ show rest
+
+allargs :: ARGS '[I8, I8, I8, I8, I8] I8
+allargs = 
+  getArgs ((\a b c d e -> a+b+c+d+e) :: Exp I8 -> Exp I8 -> Exp I8 -> Exp I8 -> Exp I8 -> Exp I8)
+
+type EI8  = Exp Int8

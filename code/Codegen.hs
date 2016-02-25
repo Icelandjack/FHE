@@ -1,128 +1,7 @@
--- Idea for programming game:
---   Puzzle Game.
--- Game board consists of empty (_) or marked (X) cells, whose colour
--- is purely decorative (for now?)
--- 
---   lvl(-1): 
---     PERSONALITY TEST.
--- 
--- >> WELCOME.
--- FIRST WE NEED TO RUN A PERSONALITY TEST.
--- 
--- ON THE SCREEN YOU SHOULD SEE TWO CELLS.
---   [G(reen)]  [B(lue)]
--- SUPPRESS THE CELL THAT CONTAINS YOUR FAVOURITE COLOUR.
-
--- 4 cells with different colours: green,blue,red and black.
--- 
--- Mark the cell that is your favourite.
---   [green,blue,red,black]
--- 
--- Mark the cell that is your favourite.
---   [green,blue,X,black]
--- 
--- Cell number 3 is your favourite!
---   [green,blue,X,black]
--- 
---   lvl0: 
--- Displays two cells. Which represent dog and cat.
--- The user is asked which cell represents the dog by flipping it to
--- black.
---   What is the dog?
---  (ORDER DOES NOT MATTER.)
---       [_,_]
---    -turns into→
---   What is the dog?
---  (ORDER DOES NOT MATTER.)
---       [X,_]
--- And same question for cat:
---   What is the cat?
---  (ORDER DOES NOT MATTER.)
---       [_,_]
---    -turns into→
---   What is the cat?
---  (ORDER DOES NOT MATTER.)
---       [_,X]
---
---      Good job!
--- 
--- The game then asks: “What is blue?” and the user must select the
--- cell that represents blue 
---         WHAT IS BLUE?
---         (pick ur fav)
---            [_|X]    (save)
--- presses (save) and is presented with the same question for red:
---         WHAT IS RED?
---       (pick the other)
---            [X|_]    (save)
--- presses (save). Computer contratulates you:
---   You chose LEFT  [X|_] for “red”.
---   You chose RIGHT [_|X] for “blue”.
--- 
---
---   lvl10: Represent the four values {A,B,C,D} using 4 squares.
---          WHAT IS A?
---           [_|X|_|_]
---          WHAT IS B?
---           [_|_|_|X]
---          WHAT IS C?
---           [_|_|X|_] (save)
---          WHAT IS D?
---           [X|_|_|_] (save)
---
---   lvl15: Represent the four values {A,B,C,D} using fewer than 4
--- squares.  Press the minus (-) to remove squares.Can't encode
--- {A,B,C,D} with: [X|_|_|_], [_|X|_|_], [_|_|X|_], [_|_|_|X].
--- 
--- Instead you can represent them using only three cells:
--- 
---          WHAT IS A?
---       (-) [_|_|_|_]
---
--- ==PRESSED=(-)==
---          WHAT IS A?
---       (-)   [_|_|_]
---          WHAT IS A? 
---       (-)   [X|_|_] (save)
---          WHAT IS B?
---       (-)   [_|X|_] (save)
---          WHAT IS C?
---       (-)   [_|_|X] (save)
---          WHAT IS D?
---       (-)   [_|_|_] (save)
---   
--- 
--- Instead must represent the first value A with the board [_,X] and
--- the second with [X,_]
--- 
---   A = [_|_] 
---   B = [_|X] 
---   C = [X|_] 
---   D = [X|X]
--- 
---   lvl30: Represent values with certain properties, such that some range 
--- of cells are ordered, for example if you want to represent a deck of cards
--- 
--- Represent cards:
---   
-
--- Which cell represents colour:
---    COLOUR   (-) [_,_]
---    COLOUR   (-) [-,_]
---    COLOUR   (-) [-,X]
--- Which configuration of right cell (that you chose) is "red":
---    RED      [-,_]
--- Which configuration of right cell (that you chose) is "black":
---    BLACK    [-,X]
--- 
--- Represent:
---    HEARTS   [_,_]
---    DIAMONDS [_,X]
---    CLUBS    [X,_]
---    SPADES   [X,X]
--- 
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE UnicodeSyntax #-}
+{-# LANGUAGE UnicodeSyntax, FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances, TemplateHaskell #-}
 
 module Codegen where
 
@@ -157,6 +36,8 @@ import qualified Data.Text.Lazy.Builder as TLB
 import Util
 import Variable
 import Exp
+import Types
+import Operators
 
 type Instruction = String
 
@@ -185,28 +66,57 @@ data CodegenState = CGS {
   _codegenStateCount        ∷ Natural
 } deriving (Eq, Show)
 
-makeClassy       ''BasicBlock
-makeClassyPrisms ''BasicBlock
-makeClassy       ''CodegenState
-makeClassyPrisms ''CodegenState
-makeFields       ''CodegenState
+-- makeClassy       ''BasicBlock
+-- makeClassyPrisms ''BasicBlock
+-- makeClassy       ''CodegenState
+-- makeClassyPrisms ''CodegenState
+-- makeFields       ''CodegenState
 
 type Codegen = Codegen' CodegenState
 
 -- | The code generation monad.
-newtype Codegen' st a = CG { runCG ∷ WriterT (Epilogue Name) (State st) a }
+newtype Codegen' st a = CG { runCG ∷ WriterT (Epilogue Id) (State st) a }
   deriving (Functor, Applicative, Monad,
-            MonadWriter (Epilogue Name),
+            MonadWriter (Epilogue Id),
             MonadState  st,
             MonadFix)
 
-type instance Zoomed (Codegen' st) = Zoomed (WriterT (Epilogue Name) (State st))
+-- TH doesn't generate shit for some reason
+instructions :: Lens' BasicBlock [Instruction]
+instructions = lens _instructions $ 
+  \(BB _ b c) a -> BB a b c
+
+terminator :: Lens' BasicBlock String
+terminator = lens _terminator $ 
+  \(BB a _ c) b -> BB a b c
+
+index' :: Lens' BasicBlock Natural
+index' = lens _index' $ 
+  \(BB a b _) c -> BB a b c
+
+currentBlock :: Lens' CodegenState Label
+currentBlock = lens _codegenStateCurrentBlock $ \(CGS _ b c d) a -> 
+  CGS a b c d
+
+blocks :: Lens' CodegenState (M.Map Label BasicBlock)
+blocks = lens _codegenStateBlocks $ \(CGS a _ c d) b -> 
+  CGS a b c d
+
+blockCount :: Lens' CodegenState Natural
+blockCount = lens _codegenStateCount $ \(CGS a b _ d) c -> 
+  CGS a b c d
+
+count :: Lens' CodegenState Natural
+count = lens _codegenStateCount $ \(CGS a b c _) d -> 
+  CGS a b c d
+
+-- type instance Zoomed (Codegen' st) = Zoomed (WriterT (Epilogue Name) (State st))
 
 -- zoom currentBlock ∷ Codegen' Label c → Codegen c
-instance Zoom (Codegen' state) (Codegen' state') state state' where
-    zoom ∷ LensLike' (Zoomed (Codegen' state) c) state' state
-         → Codegen' state c → Codegen' state' c
-    zoom l (CG m) = CG (zoom l m)
+-- instance Zoom (Codegen' state) (Codegen' state') state state' where
+--     zoom ∷ LensLike' (Zoomed (Codegen' state) c) state' state
+--          → Codegen' state c → Codegen' state' c
+--     zoom l (CG m) = CG (zoom l m)
 
 -- | TODO: Explain.
 -- This is used to store actions that need to be run after the
@@ -214,9 +124,9 @@ instance Zoom (Codegen' state) (Codegen' state') state state' where
 newtype Epilogue a = Epilogue [a]
   deriving (Show, Monoid, Functor, Foldable, Traversable)
 
-------------------------------------------------------------------------------
--- State Operations 
-------------------------------------------------------------------------------
+-- ------------------------------------------------------------------------------
+-- -- State Operations 
+-- ------------------------------------------------------------------------------
 
 -- See explanation in ‘runCodegenWith’.
 uninitialisedState ∷ CodegenState
@@ -230,6 +140,9 @@ runCodegen = runCodegenWith uninitialisedState
 evalCodegen ∷ Codegen c → c
 evalCodegen = fst . runCodegen
 
+-- | Gets the value 
+execCodegen ∷ Codegen c → CodegenState
+execCodegen = snd . runCodegen
 
 runCodegenWith ∷ ∀a. CodegenState → Codegen a → (a, CodegenState)
 runCodegenWith initState codegen = runState noEpilogue initState
@@ -320,18 +233,18 @@ currBlock = lens get set where
 ------------------------------------------------------------------------------
 
 -- | Bumps the counter by one and return the new value.
-fresh ∷ Codegen Natural
+fresh :: MonadState CodegenState m => m Natural
 fresh = 
   count <+= 1
 
 -- | Get a unique string. After several iterations I'm falling back on
 -- appending a fresh number as naively as possible.
-uniqueVarName ∷ String → Codegen Name
-uniqueVarName name = do
-  Variable name <$> fresh
+uniqueVarId :: MonadState CodegenState f => String -> f Id
+uniqueVarId name = 
+  Id name <$> fresh
 
-uniqueLabelName ∷ String → Codegen Label
-uniqueLabelName name  = do
+uniqueLabelName :: MonadState CodegenState f => String -> f Label
+uniqueLabelName name =
   Label name <$> fresh
 
 -- | Makes all generated variable names unique.
@@ -342,91 +255,77 @@ uniqueLabelName name  = do
 -- TODO: Check invariants of circular method.
 makeFresh ∷ Exp a → Codegen (Exp a)
 makeFresh = aux M.empty where 
-  aux ∷ M.Map Name Name → Exp a → Codegen (Exp a)
+  aux ∷ M.Map Id Id → Exp a → Codegen (Exp a)
   aux m = \case
     -- Interesting cases, 
-    Var name → 
-      case M.lookup name m of
-        Nothing →
-          pure (Var name)
-        Just newName → 
-          pure (Var newName)
-  
-    While n cond body init → do
-      new ← uniqueVarName "while"
-      let m' = M.insert n new m
-  
-      While new
-        <$> aux m' cond
-        <*> aux m' body
-        <*> aux m' init
-    
-    Arr len n val → do
-      new ← uniqueVarName "arr"
-      let m' = M.insert n new m
-  
-      Arr 
-        <$> aux m' len
-        <*> pure new
-        <*> aux m' val
-  
-    Lam n body → do
-      new ← uniqueVarName "lam"
-      let m' = M.insert n new m
-  
-      Lam
-        <$> pure new
-        <*> aux m' body
+    -- Var (VAR ty name) → 
+    --   case M.lookup name m of
+    --     Nothing →
+    --       pure (Var (VAR ty name))
+    --     Just newId → 
+    --       pure (Var (VAR ty newId))
   
     -- Rote
-    LitI i → 
-      pure (LitI i)
+    Constant ty c →
+      pure (Constant ty c)
+
+    -- BinOp (Bin (OpArr n) f) len val 
+    -- Arr len n val → do
+    --   new ← uniqueVarN "arr"
+    --   let m' = M.insert n new m
   
-    LitB b → 
-      pure (LitB b)
+    --   Arr 
+    --     <$> aux m' len
+    --     <*> pure new
+    --     <*> aux m' val
+
+    -- While n cond body init → do
+    --   new ← uniqueVarId "while"
+    --   let m' = M.insert n new m
   
-    If a b c → 
-      If 
-        <$> aux m a 
-        <*> aux m b 
+    --   While new
+    --     <$> aux m' cond
+    --     <*> aux m' body
+    --     <*> aux m' init
+
+    -- Lam n body → do
+    --   new ← uniqueVarId "lam"
+    --   let m' = M.insert n new m
+  
+    --   Lam
+    --     <$> pure new
+    --     <*> aux m' body
+
+    -- This should appear before cases like "Arr" and "While" 
+    --  (I refactored, no longer true?)
+    UnOp unaryOp a → 
+      UnOp unaryOp
+        <$> aux m a
+
+    BinOp binaryOp a b → 
+      BinOp binaryOp
+          <$> aux m a 
+          <*> aux m b
+
+    TerOp ternaryOp a b c →
+      TerOp ternaryOp
+        <$> aux m a
+        <*> aux m b
         <*> aux m c
   
-    UnOp op f rep a → 
-      UnOp op f rep 
-        <$> aux m a
+    _ → error "makeFresh: add case"
   
-    BinOp op f rep a b → 
-      BinOp op f rep
-        <$> aux m a 
-        <*> aux m b
-  
-    Len arr →
-      Len <$> aux m arr
-  
-    ArrIx arr ix → 
-      ArrIx 
-        <$> aux m arr
-        <*> aux m ix
-  
-    Fst pair → 
-      Fst <$> aux m pair
-  
-    Snd pair → 
-      Snd <$> aux m pair
-  
-    _ → error "add case"
-  
--- | Invariant: 'new ∷ Name' is a fresh variable and does not appear in
+-- | Invariant: 'new ∷ Id' is a fresh variable and does not appear in
 -- 'Exp a'.
 -- 
 -- Substitutes a variable by a new variable.
 -- data Operand a = Reference a | ConstTru | ConstFls | ConstNum Int
-rename ∷ Name → Name → Exp a → Exp a
+rename ∷ Id → Id → Exp a → Exp a
 rename old new originalExp = case originalExp of
   -- Interesting cases, 
-  Var name 
+  Var (name ::: ty)
     | name == old 
-    → Var new
+    → Var (new ::: ty)
 
     | otherwise
     → originalExp
@@ -451,20 +350,17 @@ rename old new originalExp = case originalExp of
         name
         (rename old new val)
 
-  Lam name body 
-    | name == old
-    → originalExp
+  -- Lam name body 
+  --   | name == old
+  --   → originalExp
 
-    | otherwise
-    → Lam name
-        (rename old new body)
+  --   | otherwise
+  --   → Lam name
+  --       (rename old new body)
 
   -- Rote
-  LitI i → 
-    LitI i
-
-  LitB b → 
-    LitB b
+  Constant ty c →
+    Constant ty c
 
   If a b c → 
     If 
@@ -472,12 +368,12 @@ rename old new originalExp = case originalExp of
       (rename old new b)
       (rename old new c)
 
-  UnOp op f rep a → 
-    UnOp op f rep 
+  UnOp unaryOp a → 
+    UnOp unaryOp
       (rename old new a)
 
-  BinOp op f rep a b → 
-    BinOp op f rep
+  BinOp binaryOp a b → 
+    BinOp binaryOp
       (rename old new a)
       (rename old new b)
 
@@ -489,13 +385,7 @@ rename old new originalExp = case originalExp of
       (rename old new arr)
       (rename old new ix)
 
-  Fst pair → 
-    Fst (rename old new pair)
-
-  Snd pair → 
-    Snd (rename old new pair)
-
-  _ → error "add case"
+  _ → error "rename: add case"
 
 ------------------------------------------------------------------------------
 -- OPERATIONS
@@ -510,9 +400,9 @@ instr_ = runFormat ?? \txtBuilder → do
 
 -- | Adds an instruction to the current basic block and returns the
 -- variable name of the register returned.
-namedInstr ∷ String → Format (Codegen Name) a → a
+namedInstr ∷ String → Format (Codegen Id) a → a
 namedInstr name = runFormat ?? \txtBuilder → do
-  ref ← uniqueVarName name
+  ref ← uniqueVarId name
   instr_ (sh%" = "%builder) ref txtBuilder
   pure ref
 
@@ -520,14 +410,14 @@ namedInstr name = runFormat ?? \txtBuilder → do
 -- reference as an operand for easier use with `compile'.
 namedOp ∷ String → Format (Codegen Op) a → a
 namedOp name = runFormat ?? \txtBuilder → do
-  ref ← uniqueVarName name
+  ref ← uniqueVarId name
   instr_ (sh%" = "%builder) ref txtBuilder
   pure (Reference ref)
 
 -- | Appends a raw instruction (as a String…) to the instruction list of
 -- the current block, returns its newly generated identifier which is
 -- based off "u".
-instr ∷ Format (Codegen Name) a → a
+instr ∷ Format (Codegen Id) a → a
 instr = namedInstr "u" 
 
 operand ∷ Format (Codegen Op) a → a
@@ -551,33 +441,62 @@ createBinop op =
 -- | Compiles a unary operation.
 compileUnop ∷ UnOp a b → Op → Codegen Op
 compileUnop = \case
-  OpNeg → 
-    createBinop "sub" "i32" (ConstNum 0) 
   OpNot → 
     createBinop "xor" "i1 " ConstTru
+  OpNeg num → do
+
+    let numberToOp ∷ NumberType a → Integer → Op
+        numberToOp (NumberType INT8)  = ConstNum8  . fromInteger 
+        numberToOp (NumberType INT32) = ConstNum32 . fromInteger 
+
+    createBinop "sub" "i32" (numberToOp num 0) 
+
+  OpFst → 
+    π(0) 
+
+  OpSnd →
+    π(1)
+
+  OpLen →
+    getLength
+
+π ∷ Int → Op → Codegen Op
+π(n) pair = namedOp "fst" ("extractvalue %pairi32i32 "%op%", "%int) pair n
+
+getLength ∷ Op → Codegen Op
+getLength nm = do
+  len ← namedInstr "len.ptr" ("getelementptr %Arr* "%op%", i32 0, i32 1") nm
+  namedOp "length" ("load i32* "%shown) len
+
+-- compile (Len (Arr len _ _)) = do
+--   compile len
+
+-- compile (Len arr) = do
+--   compile arr >>= getLength -- >>= i32toi64
+
 
 -- | Compiles a binary operation.
 compileBinop ∷ BinOp a b c → Op → Op → Codegen Op
 compileBinop = \case
-  OpAdd → 
-    createBinop "add" "i32"
-  OpSub → 
-    createBinop "sub" "i32" 
-  OpMul → 
-    createBinop "mul" "i32" 
+  OpAdd num → 
+    createBinop "add" (showNumType num)
+  OpSub num → 
+    createBinop "sub" (showNumType num)
+  OpMul num → 
+    createBinop "mul" (showNumType num)
 
-  OpEqual → 
-    createBinop "icmp eq"  "i32" 
-  OpNotEqual → 
-    createBinop "icmp ne"  "i32" 
-  OpLessThan → 
-    createBinop "icmp slt" "i32" 
-  OpLessThanEq → 
-    createBinop "icmp sle" "i32" 
-  OpGreaterThan → 
-    createBinop "icmp sgt" "i32" 
-  OpGreaterThanEq → 
-    createBinop "icmp sge" "i32" 
+  OpEqual scalar → 
+    createBinop "icmp eq" (showScalarType scalar)
+  OpNotEqual scalar → 
+    createBinop "icmp ne" (showScalarType scalar)
+  OpLessThan scalar → 
+    createBinop "icmp slt" (showScalarType scalar)
+  OpLessThanEq scalar → 
+    createBinop "icmp sle" (showScalarType scalar)
+  OpGreaterThan scalar → 
+    createBinop "icmp sgt" (showScalarType scalar)
+  OpGreaterThanEq scalar → 
+    createBinop "icmp sge" (showScalarType scalar)
 
   -- a ∧ b = a * b
   OpAnd → 
@@ -590,7 +509,32 @@ compileBinop = \case
     createBinop "add" "i1" a_plus_b a_mult_b
 
   OpXor → 
-    createBinop "xor" "i32" 
+    createBinop "xor" "i8" 
+
+  OpPair → let
+    insNum ∷ Op → Op → Int → Codegen Op
+    insNum = 
+      namedOp "updated" 
+       ("insertvalue %pairi32i32 "%op%", i32 "%op%", "%d) 
+
+    mkPair ∷ Op → Op → Codegen Op
+    mkPair x y = do
+     let initVal = Struct [Undef "i32", Undef "i32"]
+     retVal₁ ← insNum initVal x 0
+     retVal₂ ← insNum retVal₁ y 1
+     return retVal₂
+
+    in mkPair
+
+  foo -> error (show foo ++ " ndefined shit")
+
+compileTerop ∷ TernOp a b c d → Op → Op → Op → Codegen Op
+compileTerop = \case
+  OpIf → 
+    error "if..."
+
+  OpWhile name →
+    error "while..."
 
 ------------------------------------------------------------------------------
 -- CODE GENERATION
@@ -632,3 +576,4 @@ fakeCodegen = MkCodegen other (M.fromList [(entry, fakeBasicBlock), (foo,  fakeB
 fakeBasicBlock = MkBB ["a = 5", "b = a + a", "c = a + b"] "ret a + b + c" 5
 fakeBasicBlock' = MkBB ["litla", "rassgat"] "ret 420" 10
 -}
+

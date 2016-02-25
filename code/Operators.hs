@@ -1,8 +1,9 @@
 module Operators where
 
+import Variable
 import Types
-import Variable (Name)
-import Data.Int (Int8, Int32)
+
+import Numeric.Natural
 
 ------------------------------------------------------------------------
 -- Unary operators                                                    --
@@ -43,11 +44,11 @@ import Data.Int (Int8, Int32)
 --     OpNeg getNumber ∷ GetNumber a ⇒ UnOp a a
 -- 
 -- 
-data Construct a where
-  Con ∷ GetType a ⇒ ConOp a → a → Construct a
+-- data Construct a where
+--   Con ∷ GetType a ⇒ ConOp a → Construct a
 
-data ConOp a where
-  VarOp ∷ Name → ConOp a
+-- data ConOp a where
+--   VarOp ∷  VAR' a → ConOp a
 
 data Unary a b where
   Un ∷ (GetType a, GetType b) ⇒ UnOp a b → (a → b) → Unary a b
@@ -59,7 +60,7 @@ data UnOp a b where
   OpFst ∷ UnOp (a, b) a
   OpSnd ∷ UnOp (a, b) b
 
-  OpLen ∷ UnOp [a] Int32
+  OpLen ∷ UnOp [a] I32
 
 instance Show (Unary a b) where
   show (Un op _function) = show op
@@ -100,11 +101,11 @@ data BinOp a b c where
   -- Logical
   OpAnd ∷ BinOp Bool Bool Bool
   OpOr  ∷ BinOp Bool Bool Bool
-  OpXor ∷ BinOp Int8 Int8 Int8
+  OpXor ∷ BinOp I8   I8   I8
 
   OpPair  ∷ BinOp a b (a, b)
-  OpArr   ∷ Name → BinOp Int32 a [a]
-  OpArrIx ∷ BinOp [a] Int32 a
+  OpArr   ∷ Id → BinOp I32 a [a]
+  OpArrIx ∷ BinOp [a] I32 a
 
 instance Show (Binary a b c) where
   show (Bin op _function) = show op
@@ -138,7 +139,7 @@ data Ternary a b c d where
 
 data TernOp a b c d where
   OpIf    ∷ TernOp Bool a a a
-  OpWhile ∷ Name → TernOp Bool s s s
+  OpWhile ∷ Id → TernOp Bool s s s
 
 instance Show (Ternary a b c d) where
   show (Ter op _function) = show op
@@ -154,4 +155,4 @@ instance Show (TernOp a b c d) where
 --   OpNeg (NumberType ty) → Type ty
 --   OpFst  → getType
   
---   _ → undefined 
+

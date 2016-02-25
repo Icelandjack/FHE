@@ -45,7 +45,7 @@ data PushT b where
 -- Turns 'PushT a' arrays into write-ĸontinuations.
 apply ∷ PushT a → ((Ix → a → IO ()) → IO ())
 apply pushT ĸ = case pushT of
-  Generate len ixf → apply undefined undefined
+  Generate len ixf → error "apply"
   
   Map f push → apply push (\ix a → ĸ ix (f a))
 
