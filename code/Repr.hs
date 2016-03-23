@@ -19,27 +19,27 @@ import Data.Bits.Lens
 import Data.Bits
 import Data.Kind
 
-type TRepr t = (GetType (ReprType t), Repr t)
+-- type TRepr t = (GetType (ReprType t), Repr t)
 
-class Repr exp where
-  {-# MINIMAL repr | (toExp, fromExp) #-}
+-- class Repr exp where
+--   {-# MINIMAL repr | (toExp, fromExp) #-}
 
-  type ReprType exp ∷ ★
+--   type ReprType exp ∷ ★
 
-  repr ∷ Iso' exp (Exp (ReprType exp))
-  repr = iso toExp fromExp
+--   repr ∷ Iso' exp (Exp (ReprType exp))
+--   repr = iso toExp fromExp
 
-  toExp   ∷ exp → Exp (ReprType exp)
-  toExp   = view repr
+--   toExp   ∷ exp → Exp (ReprType exp)
+--   toExp   = view repr
 
-  fromExp ∷ Exp (ReprType exp) → exp
-  fromExp = view (from repr)
+--   fromExp ∷ Exp (ReprType exp) → exp
+--   fromExp = view (from repr)
 
-instance Repr (Exp a) where
-  type ReprType (Exp a) = a
+-- instance Repr (Exp a) where
+--   type ReprType (Exp a) = a
 
-  repr ∷ Iso' (Exp a) (Exp a)
-  repr = id
+--   repr ∷ Iso' (Exp a) (Exp a)
+--   repr = id
 
 -- instance (TRepr a, TRepr b) ⇒ Repr (a, b) where
 --   type ReprType (a, b) = (ReprType a, ReprType b)

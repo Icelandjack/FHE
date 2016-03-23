@@ -257,13 +257,13 @@ makeFresh ∷ Exp a → Codegen (Exp a)
 makeFresh = aux M.empty where 
   aux ∷ M.Map Id Id → Exp a → Codegen (Exp a)
   aux m = \case
-    -- Interesting cases, 
-    -- Var (VAR ty name) → 
-    --   case M.lookup name m of
-    --     Nothing →
-    --       pure (Var (VAR ty name))
-    --     Just newId → 
-    --       pure (Var (VAR ty newId))
+    -- Interesting cases,
+    MkVar (id ::: ty) -> 
+      case M.lookup id m of
+        Nothing -> 
+          pure (MkVar (id    ::: ty))
+        Just newId -> 
+          pure (MkVar (newId ::: ty))
   
     -- Rote
     Constant ty c →
@@ -323,9 +323,9 @@ makeFresh = aux M.empty where
 rename ∷ Id → Id → Exp a → Exp a
 rename old new originalExp = case originalExp of
   -- Interesting cases, 
-  Var (name ::: ty)
+  MkVar (name ::: ty)
     | name == old 
-    → Var (new ::: ty)
+    → MkVar (new ::: ty)
 
     | otherwise
     → originalExp
@@ -433,23 +433,25 @@ terminate = runFormat ?? \txtBuilder → do
   currBlock.terminator .= newTerminator
 
 -- | Emit a binary operation.
-createBinop ∷ String → String → Op → Op → Codegen Op
-createBinop op =  
+createBinop ∷ String → Ty a → Op → Op → Codegen Op
+createBinop op ty =  
   namedOp (last (words op))
-    (s% " " %s% " " %sh% ", " %sh) op 
+    (s% " " %s% " " %sh% ", " %sh) op (toLLVMType ty)
 
 -- | Compiles a unary operation.
-compileUnop ∷ UnOp a b → Op → Codegen Op
+compileUnop ∷ forall a b. UnOp a b → Op → Codegen Op
 compileUnop = \case
   OpNot → 
-    createBinop "xor" "i1 " ConstTru
-  OpNeg num → do
+    createBinop "xor" B ConstTru
+  OpNeg → do
+    let numberToOp ∷ Ty a → Integer → Op
+        numberToOp I8  = ConstNum8  . fromInteger 
+        numberToOp I32 = ConstNum32 . fromInteger 
 
-    let numberToOp ∷ NumberType a → Integer → Op
-        numberToOp (NumberType INT8)  = ConstNum8  . fromInteger 
-        numberToOp (NumberType INT32) = ConstNum32 . fromInteger 
+    let numType :: Ty a
+        numType = getNum
 
-    createBinop "sub" "i32" (numberToOp num 0) 
+    createBinop "sub" numType (numberToOp numType 0)
 
   OpFst → 
     π(0) 
@@ -476,40 +478,40 @@ getLength nm = do
 
 
 -- | Compiles a binary operation.
-compileBinop ∷ BinOp a b c → Op → Op → Codegen Op
+compileBinop ∷ forall a b c. BinOp a b c → Op → Op → Codegen Op
 compileBinop = \case
-  OpAdd num → 
-    createBinop "add" (showNumType num)
-  OpSub num → 
-    createBinop "sub" (showNumType num)
-  OpMul num → 
-    createBinop "mul" (showNumType num)
+  OpAdd → 
+    createBinop "add" (getNum @a)
+  OpSub → 
+    createBinop "sub" (getNum @a)
+  OpMul → 
+    createBinop "mul" (getNum @a)
 
-  OpEqual scalar → 
-    createBinop "icmp eq" (showScalarType scalar)
-  OpNotEqual scalar → 
-    createBinop "icmp ne" (showScalarType scalar)
-  OpLessThan scalar → 
-    createBinop "icmp slt" (showScalarType scalar)
-  OpLessThanEq scalar → 
-    createBinop "icmp sle" (showScalarType scalar)
-  OpGreaterThan scalar → 
-    createBinop "icmp sgt" (showScalarType scalar)
-  OpGreaterThanEq scalar → 
-    createBinop "icmp sge" (showScalarType scalar)
+  OpEqual → 
+    createBinop "icmp eq" (getSca @a)
+  OpNotEqual → 
+    createBinop "icmp ne" (getSca @a)
+  OpLessThan → 
+    createBinop "icmp slt" (getSca @a)
+  OpLessThanEq → 
+    createBinop "icmp sle" (getSca @a)
+  OpGreaterThan → 
+    createBinop "icmp sgt" (getSca @a)
+  OpGreaterThanEq → 
+    createBinop "icmp sge" (getSca @a)
 
   -- a ∧ b = a * b
   OpAnd → 
-    createBinop "mul" "i1"  
+    createBinop "mul" B
 
   -- a ∨ b = a + b + ab
   OpOr → \a b → do
-    a_plus_b ← createBinop "add" "i1" a b
-    a_mult_b ← createBinop "mul" "i1" a b
-    createBinop "add" "i1" a_plus_b a_mult_b
+    a_plus_b ← createBinop "add" B a b
+    a_mult_b ← createBinop "mul" B a b
+    createBinop "add" B a_plus_b a_mult_b
 
   OpXor → 
-    createBinop "xor" "i8" 
+    createBinop "xor" I8
 
   OpPair → let
     insNum ∷ Op → Op → Int → Codegen Op

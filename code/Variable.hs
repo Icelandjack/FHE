@@ -20,11 +20,10 @@ instance Show Id where
 --   show (Variable name i) = "%" ++ name  ++ "_" ++ show i
 
 data V a where
-  (:::) :: Id -> Type a → V a
+  (:::) :: Id -> Ty a → V a
 
 instance Show (V a) where
-  show (name ::: Type ty) = "%" ++ show name ++ subscript ty
-  -- show (V (Type ty) str i) = "%" ++ str ++ show i ++ subscript ty
+  show (name ::: ty) = "%" ++ show name ++ subscript ty
 
 data Ex f where
   Ex :: f x -> Ex f
@@ -34,7 +33,7 @@ ex f (Ex fa) = f fa
 
 -- type Name = Ex V
 
-variableType' :: Lens (V a) (V b) (Type a) (Type b)
+variableType' :: Lens (V a) (V b) (Ty a) (Ty b)
 variableType' = 
   lens 
     (\(_    ::: ty)    -> ty)
@@ -79,9 +78,9 @@ variableNat' =
 pattern Lambda ∷ Natural → Id
 pattern Lambda ident = Id "λ" ident
 
-pattern Lambda2 ∷ GetType a => Natural -> V a
-pattern Lambda2 ident <- Id "λ" ident ::: _ where
-        Lambda2 ident =  Id "λ" ident ::: getType
+pattern Lambda2 ∷ GetTy ty _rep => Natural -> V ty
+pattern Lambda2 ident <- Id "λ" ident ::: _     where
+        Lambda2 ident =  Id "λ" ident ::: getTy
 
 -- -- | Getting the identifier from a variable.
 pattern VarId ∷ Natural → Id

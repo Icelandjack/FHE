@@ -1,8 +1,11 @@
+{-# LANGUAGE UndecidableInstances #-} -- TODO Remove later
+
 module Operators where
 
 import Variable
 import Types
 
+import Data.Int
 import Numeric.Natural
 
 ------------------------------------------------------------------------
@@ -32,12 +35,12 @@ import Numeric.Natural
 -- Some representations are overloaded, 'OpNeg' works on any numeric
 -- type:
 --   
---     OpNeg ∷ NumberType a → UnOp a a
+--     OpNeg ∷ GetNum ty _num -> UnOp a a
 -- 
 -- So we have
 -- 
---     OpNeg (NumberType INT8)  ∷ UnOp Int8 Int8
---     OpNeg (NumberType INT32) ∷ UnOp Int8 Int32
+--     OpNeg ∷ UnOp Int8 Int8
+--     OpNeg ∷ UnOp Int8 Int32
 -- 
 -- We can hijack Haskell's ad-hoc polymorphism using
 -- 
@@ -50,71 +53,83 @@ import Numeric.Natural
 -- data ConOp a where
 --   VarOp ∷  VAR' a → ConOp a
 
+-- class    GetTy ty (ToTYPE ty) => GETTY ty where getTy_ :: Ty ty
+-- instance GetTy ty (ToTYPE ty) => GETTY ty where getTy_ = getTy
+
+-- class GETTY ty                                               => GETSCA ty where getSca_ :: Ty ty
+-- instance (ToTYPE ty ~ MKSCALAR rep, GetTy ty (MKSCALAR rep)) => GETSCA ty where getSca_ = getSca
+
+-- class    (Num ty, GETSCA ty)                                                         => GETNUM ty where getNum_ :: Ty ty
+-- instance (Num ty, ToTYPE ty ~ MKSCALAR (MKNUM rep), GetTy ty (MKSCALAR (MKNUM rep))) => GETNUM ty where getNum_ = getNum
+
 data Unary a b where
-  Un ∷ (GetType a, GetType b) ⇒ UnOp a b → (a → b) → Unary a b
+  Un ∷ (GetTy a a_rep, GetTy b b_rep) 
+     ⇒ UnOp a b 
+     → (a → b) 
+     → Unary a b
 
 data UnOp a b where
   OpNot ∷ UnOp Bool Bool
-  OpNeg ∷ NumberType a → UnOp a    a
+  OpNeg ∷ GetNum a a_num => UnOp a a
 
-  OpFst ∷ UnOp (a, b) a
-  OpSnd ∷ UnOp (a, b) b
+  OpFst ∷ (GetTy p1 p1_rep, GetTy p2 p2_rep) => UnOp (p1, p2) p1
+  OpSnd ∷ (GetTy p1 p1_rep, GetTy p2 p2_rep) => UnOp (p1, p2) p2
 
-  OpLen ∷ UnOp [a] I32
+  OpLen ∷ GetTy a a_rep => UnOp [a] Int32
 
 instance Show (Unary a b) where
   show (Un op _function) = show op
 
 instance Show (UnOp a b) where
   show = \case
-    OpNot   → "¬"
-    OpNeg _ → "-"
+    OpNot → "¬"
+    OpNeg → "-"
 
-    OpFst   → "fst"
-    OpSnd   → "snd"
+    OpFst → "fst"
+    OpSnd → "snd"
 
-    OpLen   → "len"
+    OpLen → "len"
 
 ------------------------------------------------------------------------
 -- Binary operators                                                   --
 ------------------------------------------------------------------------
 data Binary a b c where
-  Bin ∷ (GetType a, GetType b, GetType c) 
+  Bin ∷ (GetTy a a_rep, GetTy b b_rep, GetTy c c_rep) 
       ⇒ BinOp a b c 
       → (a → b → c) 
       → Binary a b c
 
 data BinOp a b c where
   -- Arithmetic
-  OpAdd ∷ NumberType a → BinOp a a a
-  OpSub ∷ NumberType a → BinOp a a a
-  OpMul ∷ NumberType a → BinOp a a a
+  OpAdd ∷ GetNum a a_num => BinOp a a a
+  OpSub ∷ GetNum a a_num => BinOp a a a
+  OpMul ∷ GetNum a a_num => BinOp a a a
 
   -- Relational
-  OpEqual         ∷ ScalarType a → BinOp a a Bool
-  OpNotEqual      ∷ ScalarType a → BinOp a a Bool
-  OpLessThan      ∷ ScalarType a → BinOp a a Bool
-  OpLessThanEq    ∷ ScalarType a → BinOp a a Bool
-  OpGreaterThan   ∷ ScalarType a → BinOp a a Bool
-  OpGreaterThanEq ∷ ScalarType a → BinOp a a Bool
+  OpEqual         ∷ GetSca a a_sca => BinOp a a Bool
+  OpNotEqual      ∷ GetSca a a_sca => BinOp a a Bool
+  OpLessThan      ∷ GetSca a a_sca => BinOp a a Bool
+  OpLessThanEq    ∷ GetSca a a_sca => BinOp a a Bool
+  OpGreaterThan   ∷ GetSca a a_sca => BinOp a a Bool
+  OpGreaterThanEq ∷ GetSca a a_sca => BinOp a a Bool
 
   -- Logical
   OpAnd ∷ BinOp Bool Bool Bool
   OpOr  ∷ BinOp Bool Bool Bool
-  OpXor ∷ BinOp I8   I8   I8
+  OpXor ∷ BinOp Int8 Int8 Int8
 
-  OpPair  ∷ BinOp a b (a, b)
-  OpArr   ∷ Id → BinOp I32 a [a]
-  OpArrIx ∷ BinOp [a] I32 a
+  OpPair  ∷ (GetTy p1 p1_rep, GetTy p2 p2_rep) => BinOp p1 p2 (p1, p2)
+  OpArr   ∷ Id → BinOp Int32 a [a]
+  OpArrIx ∷ GetTy a a_rep => BinOp [a] Int32 a
 
 instance Show (Binary a b c) where
   show (Bin op _function) = show op
 
 instance Show (BinOp a b c) where
   show = \case
-    OpAdd num         → "+" ++ showNumTypeSubscript num
-    OpSub num         → "-" ++ showNumTypeSubscript num
-    OpMul num         → "*" ++ showNumTypeSubscript num
+    OpAdd             → "+" ++ subscript (getNum @a)
+    OpSub             → "-" ++ subscript (getNum @a)
+    OpMul             → "*" ++ subscript (getNum @a)
     OpEqual{}         → "="
     OpNotEqual{}      → "≠"
     OpLessThan{}      → "<"
@@ -132,7 +147,7 @@ instance Show (BinOp a b c) where
 -- Ternary operators                                                  --
 ------------------------------------------------------------------------
 data Ternary a b c d where
-  Ter ∷ (GetType a, GetType b, GetType c, GetType d)
+  Ter ∷ (GetTy a a_rep, GetTy b b_rep, GetTy c c_rep, GetTy d d_rep)
       ⇒ TernOp a b c d 
       → (a → b → c → d) 
       → Ternary a b c d
@@ -148,11 +163,3 @@ instance Show (TernOp a b c d) where
   show = \case
     OpIf{}    → "if"
     OpWhile{} → "while"
-
--- unOpType ∷ UnOp a b → Type b
--- unOpType = \case
---   OpNot                 → getType
---   OpNeg (NumberType ty) → Type ty
---   OpFst  → getType
-  
-

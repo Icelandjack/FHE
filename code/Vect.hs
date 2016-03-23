@@ -29,15 +29,15 @@ instance FunctorWithIndex (Exp Int8) Vector where
 --     formatToString ("(for "%sh%" ≔ 0…"%sh%", "%sh%")")
 --       x l (ixf (Var (VAR x))
 
-map₂ ∷ (a → b → c) → Vector a → Vector b → Vector c
-map₂ f (Indexed len₁ ixf₁) (Indexed len₂ ixf₂) = 
-  Indexed (min' len₁ len₂) (\index → f (ixf₁ index)
-                                       (ixf₂ index))
+-- map₂ ∷ (a → b → c) → Vector a → Vector b → Vector c
+-- map₂ f (Indexed len₁ ixf₁) (Indexed len₂ ixf₂) = 
+--   Indexed (min' len₁ len₂) (\index → f (ixf₁ index)
+--                                        (ixf₂ index))
 
-map₂'' ∷ (Exp a → Exp b → Exp c) → Vector (Exp a) → Vector (Exp b) → Vector (Exp c)
-map₂'' f (Indexed len₁ ixf₁) (Indexed len₂ ixf₂) = 
-  Indexed (min' len₁ len₂) (\index → f (ixf₁ index)
-                                       (ixf₂ index))
+-- map₂'' ∷ (Exp a → Exp b → Exp c) → Vector (Exp a) → Vector (Exp b) → Vector (Exp c)
+-- map₂'' f (Indexed len₁ ixf₁) (Indexed len₂ ixf₂) = 
+--   Indexed (min' len₁ len₂) (\index → f (ixf₁ index)
+--                                        (ixf₂ index))
 
 -- map₂' ∷ (Type a, Type b, Type c) 
 --       ⇒ (Exp a → Exp b → Exp c) 
