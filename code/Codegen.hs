@@ -445,8 +445,8 @@ compileUnop = \case
     createBinop "xor" B ConstTru
   OpNeg → do
     let numberToOp ∷ Ty a → Integer → Op
-        numberToOp I8  = ConstNum8  . fromInteger 
-        numberToOp I32 = ConstNum32 . fromInteger 
+        numberToOp I8 = ConstNum8 . fromInteger 
+        numberToOp I  = ConstNum  . fromInteger 
 
     let numType :: Ty a
         numType = getNum
@@ -511,7 +511,7 @@ compileBinop = \case
     createBinop "add" B a_plus_b a_mult_b
 
   OpXor → 
-    createBinop "xor" I8
+    createBinop "xor" (getTy @c)
 
   OpPair → let
     insNum ∷ Op → Op → Int → Codegen Op

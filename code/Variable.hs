@@ -5,12 +5,18 @@ import Data.List (intercalate)
 import Data.Int
 import Control.Lens
 import Types
+import Util
 
 data Id where
   Id :: String -> Natural -> Id
   deriving (Eq, Ord)
 
-idNat :: Lens' Id Natural
+getId :: V a ◃Lens'▹ Id
+getId = lens
+  (\(id ::: _) -> id)
+  (\(_ ::: ty) id -> id ::: ty)
+
+idNat :: Id ◃Lens'▹ Natural
 idNat = lens
   (\(Id _   i)   -> i)
   (\(Id str _) i -> Id str i)
@@ -22,34 +28,19 @@ instance Show Id where
 data V a where
   (:::) :: Id -> Ty a → V a
 
+type Arg = Ex V
+
 instance Show (V a) where
-  show (name ::: ty) = "%" ++ show name ++ subscript ty
+  show (name ::: ty) = show name ++ subscript ty
+
+toLLVMVar :: V a -> String
+toLLVMVar (name ::: ty) = toLLVMType ty ++ " " ++ show name
 
 data Ex f where
   Ex :: f x -> Ex f
 
 ex :: (forall x. f x -> r) -> Ex f -> r
 ex f (Ex fa) = f fa
-
--- type Name = Ex V
-
-variableType' :: Lens (V a) (V b) (Ty a) (Ty b)
-variableType' = 
-  lens 
-    (\(_    ::: ty)    -> ty)
-    (\(name ::: _ ) ty -> name ::: ty)
-
-variableName' :: Lens' (V a) String
-variableName' = 
-  lens 
-    (\(Id str _ ::: _)      -> str) 
-    (\(Id _   i ::: ty) str -> Id str i ::: ty)
-
-variableNat' :: Lens' (V a) Natural
-variableNat' = 
-  lens 
-    (\(Id _   i ::: _)    -> i)
-    (\(Id str _ ::: ty) i -> Id str i ::: ty)
 
 -- | Variables, the unique part is their 'Natural' identifier, this
 -- way variables constructed when going from a higher- to a
@@ -62,7 +53,7 @@ variableNat' =
 --   = Variable String Natural
 --   deriving (Eq, Ord)
 
--- variableNat :: Lens' Name Natural
+-- variableNat :: Name ◃Lens'▹ Natural
 -- variableNat = 
 --   lens 
 --     (\(Variable _   n)   -> n) 
@@ -78,7 +69,7 @@ variableNat' =
 pattern Lambda ∷ Natural → Id
 pattern Lambda ident = Id "λ" ident
 
-pattern Lambda2 ∷ GetTy ty _rep => Natural -> V ty
+pattern Lambda2 ∷ GetTy ty => Natural -> V ty
 pattern Lambda2 ident <- Id "λ" ident ::: _     where
         Lambda2 ident =  Id "λ" ident ::: getTy
 
@@ -103,27 +94,27 @@ data Op
   | Undef String
   | ConstTru
   | ConstFls
-  | ConstNum8  Int8
-  | ConstNum32 Int32
+  | ConstNum8 Int8
+  | ConstNum  Int
   | Struct [Op]
 
 instance Show Op where
   show = \case
     Reference a → show a
-    Undef ty     → ty ++ " undef"
-    ConstTru     → "true"
-    ConstFls     → "false"
-    ConstNum8 i  → show i
-    ConstNum32 i → show i
+    Undef ty    → ty ++ " undef"
+    ConstTru    → "true"
+    ConstFls    → "false"
+    ConstNum8 i → show i
+    ConstNum  i → show i
     Struct flds  → "{" ++ intercalate ", " (map format flds) ++ "}" where
       format ∷ Op → String
-      format (Reference n)  = "i32 " ++ "%" ++ show n
-      format (Undef ty)     = ty ++ " undef"
-      format ConstTru       = "i1 true"
-      format ConstFls       = "i1 false"
-      format (ConstNum8 i)  = "i8 " ++ show i
-      format (ConstNum32 i) = "i32 " ++ show i
-      format (Struct str)   = show str
+      format (Reference n) = "i32 " ++ "%" ++ show n
+      format (Undef ty)    = ty ++ " undef"
+      format ConstTru      = "i1 true"
+      format ConstFls      = "i1 false"
+      format (ConstNum8 i) = "i8 " ++ show i
+      format (ConstNum i)  = "i32 " ++ show i
+      format (Struct str)  = show str
 
 -- Lenses
 
@@ -143,4 +134,22 @@ instance Show Op where
 --   var ∷ Traversal' Label Natural
 --   var f (Label name id) = Label <$> pure name <*> f id
 
+
+variableType' :: Lens (V a) (V b) (Ty a) (Ty b)
+variableType' = 
+  lens 
+    (\(_    ::: ty)    -> ty)
+    (\(name ::: _ ) ty -> name ::: ty)
+
+variableName' :: Lens' (V a) String
+variableName' = 
+  lens 
+    (\(Id str _ ::: _)      -> str) 
+    (\(Id _   i ::: ty) str -> Id str i ::: ty)
+
+variableNat' :: Lens' (V a) Natural
+variableNat' = 
+  lens 
+    (\(Id _   i ::: _)    -> i)
+    (\(Id str _ ::: ty) i -> Id str i ::: ty)
 

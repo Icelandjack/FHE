@@ -1,3 +1,5 @@
+{-# LANGUAGE UndecidableInstances #-}
+
 module Util where
 
 import Debug.Trace
@@ -6,6 +8,8 @@ import Control.Exception (evaluate)
 import Control.Monad.Writer
 import Text.Read (readMaybe)
 import System.Exit
+import Data.Kind
+import GHC.TypeLits
 
 bind2 ∷ (Monad m) ⇒ (a → b → m c) → m a → m b → m c
 bind2 f m1 m2 = do
@@ -45,3 +49,25 @@ pattern Int ∷ Int → String
 pattern Int n ← (readMaybe → Just (n ∷ Int)) where
         Int n = show n
 
+type TypeClass = Type -> Constraint
+
+-- Taken from 'servant'
+-- | If either a or b produce an empty constraint, produce an empty constraint.
+type family (a :: Constraint) ∨ (b :: Constraint) :: Constraint where
+  () ∨ b  = ()
+  a  ∨ () = ()
+  a  ∨ b  = TypeError (Text "∨: " :<>: ShowType a :<>: ShowType b)
+
+-- | If both a or b produce an empty constraint, produce an empty constraint.
+type family (a :: Constraint) ∧ (b :: Constraint) :: Constraint where
+  () ∧ () = ()
+  a  ∧ b  = TypeError (Text "∨: " :<>: ShowType a :<>: ShowType b)
+
+infixl 0 ◃, ▹, <|, |>
+(◃) = flip ($)
+(<|) = flip ($)
+(▹) = ($)
+(|>) = ($)
+
+type x ◃ f = f x
+type f ▹ x = f x

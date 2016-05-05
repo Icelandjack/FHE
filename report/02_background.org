@@ -1,5 +1,4 @@
 * Background
-
 ** Domain Specific Languages
 A domain specific language (DSL) is one 
 

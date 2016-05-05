@@ -11,8 +11,41 @@ import qualified Test.QuickCheck.Monadic as M
 import Funcs
 import Exp
 import Types
+import Operators
+import Variable
 
 import Text.Read
+
+import qualified Data.Map as M
+
+eval :: Exp a → a
+eval = \case
+  Tru → True
+  Fls → False
+
+  MkBool  i → i
+  MkInt8  i → i
+  MkInt32 i → i
+
+  If cnd t f → if eval cnd then eval t else eval f
+
+  Equal a b → eval a == eval b
+
+  BinOp (Bin OpAdd _) x y → eval x + eval y
+
+prop_bits :: [Bool] -> Property
+prop_bits bs = M.monadicIO $ do
+  let bs' :: [Exp Bool]
+      bs' = map (\case True → Tru; _ → Fls) bs
+
+  res <- M.run (runRead (mkArr bs'))
+  M.assert (res == bs)
+
+-- prop_eval ∷ (Eq a, Show a, Read a) ⇒ Exp a → Property
+-- prop_eval exp = M.monadicIO $ do
+--   value ← M.run (runRead exp)
+--   M.run (print value)
+--   M.assert (eval exp == value)
 
 
 -- data AnyExp where

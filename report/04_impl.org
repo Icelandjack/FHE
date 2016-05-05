@@ -1,15 +1,15 @@
-* Implementation
+Implementation
 
-** Hutton's Razor
+* Hutton's Razor
 Preliminary implementations focused on a simple arithmetic expression
 language rather than the language in its entirety:
 
-: data Exp = Val Word64 | Add Exp Exp
+: data Exp = Val Int | Add Exp Exp
 
 This simple language with integer constants and addition --- often
 dubbed “Hutton's razor” --- is a common vehicle (*rephrase*) for
 exploring compilation.[41] It is “unityped” since there is only a
-single type involved (=Word64=).
+single type involved (=Int=).
 
 An example of an expression of our simple language is an expression
 adding numbers from 1 to 4 $(1 + 2) + (3 + 4)$:
@@ -42,7 +42,7 @@ interpreted or observed in a variety of ways. One possible observer
 evaluates the expression by recursively replacing each =Val= with the
 identity function and each =Add= by addition:
 
-: eval :: Exp -> Word64
+: eval :: Exp -> Int
 : eval (Val n)   = n
 : eval (Add a b) = eval a + eval b
 
@@ -95,7 +95,7 @@ which can then be interpreted or turned into an executable
 : > compileRun exp
 : 10
 
-*** Testing
+** Testing
 
 + QuickCheck
   QuickCheck was used to test properties of the compiler.
@@ -163,7 +163,7 @@ implementation is much simpler to verify.
 
 This works as a simple sanity check.
 
-** =if-then-else=
+* =if-then-else=
 : TALK ABOUT KEEPING TRACK OF ENVIRONMENT OF THE BASIC BLOCKS
    
 We augment our language with an /if/-expression
@@ -173,7 +173,7 @@ We augment our language with an /if/-expression
 where the arguments of =If= indicate the conditional, then and else
 branches respectively. For simplicity 0 indicates falsehood.
 
-*** Testing
+** Testing
 When testing an expression with an /if/ expression we ideally want to
 test the branches with similar frequency.
 
@@ -201,3 +201,9 @@ split in three.
 [41] Hutton, G.:  Fold and unfold for program semantics.  In: Proceedings of the Third
 ACM SIGPLAN International Conference on Functional Programming, Baltimore,
 Maryland (1998) 280-288
+* Ad-hoc polymorphism
+We want to operate on different numeric values using the same operator,
+
+: (+) :: Exp Int  -> Exp Int  -> Exp Int
+: (+) :: Exp Int8 -> Exp Int8 -> Exp Int8
+

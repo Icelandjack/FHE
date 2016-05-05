@@ -40,7 +40,7 @@ import Numeric.Natural
 -- So we have
 -- 
 --     OpNeg ∷ UnOp Int8 Int8
---     OpNeg ∷ UnOp Int8 Int32
+--     OpNeg ∷ UnOp Int  Int
 -- 
 -- We can hijack Haskell's ad-hoc polymorphism using
 -- 
@@ -63,19 +63,19 @@ import Numeric.Natural
 -- instance (Num ty, ToTYPE ty ~ MKSCALAR (MKNUM rep), GetTy ty (MKSCALAR (MKNUM rep))) => GETNUM ty where getNum_ = getNum
 
 data Unary a b where
-  Un ∷ (GetTy a a_rep, GetTy b b_rep) 
+  Un ∷ (GetTy a, GetTy b) 
      ⇒ UnOp a b 
      → (a → b) 
      → Unary a b
 
 data UnOp a b where
   OpNot ∷ UnOp Bool Bool
-  OpNeg ∷ GetNum a a_num => UnOp a a
+  OpNeg ∷ GetNum a => UnOp a a
 
-  OpFst ∷ (GetTy p1 p1_rep, GetTy p2 p2_rep) => UnOp (p1, p2) p1
-  OpSnd ∷ (GetTy p1 p1_rep, GetTy p2 p2_rep) => UnOp (p1, p2) p2
+  OpFst ∷ (GetTy p1, GetTy p2) => UnOp (p1, p2) p1
+  OpSnd ∷ (GetTy p1, GetTy p2) => UnOp (p1, p2) p2
 
-  OpLen ∷ GetTy a a_rep => UnOp [a] Int32
+  OpLen ∷ GetTy a => UnOp [a] Int
 
 instance Show (Unary a b) where
   show (Un op _function) = show op
@@ -94,33 +94,34 @@ instance Show (UnOp a b) where
 -- Binary operators                                                   --
 ------------------------------------------------------------------------
 data Binary a b c where
-  Bin ∷ (GetTy a a_rep, GetTy b b_rep, GetTy c c_rep) 
+  Bin ∷ (GetTy a, GetTy b, GetTy c) 
       ⇒ BinOp a b c 
       → (a → b → c) 
       → Binary a b c
 
 data BinOp a b c where
   -- Arithmetic
-  OpAdd ∷ GetNum a a_num => BinOp a a a
-  OpSub ∷ GetNum a a_num => BinOp a a a
-  OpMul ∷ GetNum a a_num => BinOp a a a
+  OpAdd ∷ GetNum a => BinOp a a a
+  OpSub ∷ GetNum a => BinOp a a a
+  OpMul ∷ GetNum a => BinOp a a a
 
   -- Relational
-  OpEqual         ∷ GetSca a a_sca => BinOp a a Bool
-  OpNotEqual      ∷ GetSca a a_sca => BinOp a a Bool
-  OpLessThan      ∷ GetSca a a_sca => BinOp a a Bool
-  OpLessThanEq    ∷ GetSca a a_sca => BinOp a a Bool
-  OpGreaterThan   ∷ GetSca a a_sca => BinOp a a Bool
-  OpGreaterThanEq ∷ GetSca a a_sca => BinOp a a Bool
+  OpEqual         ∷ GetSca a => BinOp a a Bool
+  OpNotEqual      ∷ GetSca a => BinOp a a Bool
+  OpLessThan      ∷ GetSca a => BinOp a a Bool
+  OpLessThanEq    ∷ GetSca a => BinOp a a Bool
+  OpGreaterThan   ∷ GetSca a => BinOp a a Bool
+  OpGreaterThanEq ∷ GetSca a => BinOp a a Bool
 
   -- Logical
   OpAnd ∷ BinOp Bool Bool Bool
   OpOr  ∷ BinOp Bool Bool Bool
-  OpXor ∷ BinOp Int8 Int8 Int8
+  -- OpXor ∷ GetNum a => BinOp a a a
+  OpXor ∷ GetTy a => BinOp a a a
 
-  OpPair  ∷ (GetTy p1 p1_rep, GetTy p2 p2_rep) => BinOp p1 p2 (p1, p2)
-  OpArr   ∷ Id → BinOp Int32 a [a]
-  OpArrIx ∷ GetTy a a_rep => BinOp [a] Int32 a
+  OpPair  ∷ (GetTy p1, GetTy p2) => BinOp p1 p2 (p1, p2)
+  OpArr   ∷ Id → BinOp Int a [a]
+  OpArrIx ∷ GetTy a => BinOp [a] Int a
 
 instance Show (Binary a b c) where
   show (Bin op _function) = show op
@@ -138,7 +139,7 @@ instance Show (BinOp a b c) where
     OpGreaterThanEq{} → "≥"
     OpAnd             → "∧"
     OpOr              → "∨"
-    OpXor             → "⊕"
+    OpXor             → "⊕" -- ++ subscript (getNum @a)
     OpPair            → "×"
     OpArr name        → "array_" ++ show name
     OpArrIx           → "‼"
@@ -147,7 +148,7 @@ instance Show (BinOp a b c) where
 -- Ternary operators                                                  --
 ------------------------------------------------------------------------
 data Ternary a b c d where
-  Ter ∷ (GetTy a a_rep, GetTy b b_rep, GetTy c c_rep, GetTy d d_rep)
+  Ter ∷ (GetTy a, GetTy b, GetTy c, GetTy d)
       ⇒ TernOp a b c d 
       → (a → b → c → d) 
       → Ternary a b c d
