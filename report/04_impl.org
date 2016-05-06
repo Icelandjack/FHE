@@ -1,5 +1,7 @@
 Implementation
 
+TODO: Minnast á að ég fann villu í nested if-then-else með aðstoð QuickCheck.
+
 * Hutton's Razor
 Preliminary implementations focused on a simple arithmetic expression
 language rather than the language in its entirety:
@@ -207,3 +209,4 @@ We want to operate on different numeric values using the same operator,
 : (+) :: Exp Int  -> Exp Int  -> Exp Int
 : (+) :: Exp Int8 -> Exp Int8 -> Exp Int8
 
+Surprised it worked!

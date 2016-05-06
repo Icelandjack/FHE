@@ -13,14 +13,14 @@ import Exp
 import Repr
 import Types
 
-data Vector a where
-  Indexed ∷ Exp Int8 → (Exp Int8 → a) → Vector a
-  deriving Functor
+-- data Vector a where
+--   Indexed ∷ Exp Int8 → (Exp Int8 → a) → Vector a
+--   deriving Functor
 
-instance FunctorWithIndex (Exp Int8) Vector where
-  imap ∷ (Exp Int8 → a → b) → (Vector a → Vector b)
-  imap f (Indexed ℓ ixf) = 
-    Indexed ℓ (\i → f i (ixf i))
+-- instance FunctorWithIndex (Exp Int8) Vector where
+--   imap ∷ (Exp Int8 → a → b) → (Vector a → Vector b)
+--   imap f (Indexed ℓ ixf) = 
+--     Indexed ℓ (\i → f i (ixf i))
 
 -- instance Show (Vector (Exp a)) where
 --   show (Indexed l ixf) = let x = Variable "x" 0 
@@ -65,9 +65,9 @@ instance FunctorWithIndex (Exp Int8) Vector where
 
 -- infixl 5 …
 
-(…) ∷ Int8 → Exp Int8 → Vector (Exp Int8)
-0…n = Indexed n id
-1…n = Indexed n (+1)
+-- (…) ∷ Int8 → Exp Int8 → Vector (Exp Int8)
+-- 0…n = Indexed n id
+-- 1…n = Indexed n (+1)
 
 -- -- -- sumFn ∷ Num a ⇒ Vector a → a
 -- -- -- sumFn (Indexed l ixf) = for 0 (l-1) (\i s → s + ixf i)

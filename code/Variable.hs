@@ -33,7 +33,7 @@ type Arg = Ex V
 instance Show (V a) where
   show (name ::: ty) = show name ++ subscript ty
 
-toLLVMVar :: V a -> String
+toLLVMVar :: ∀a. V a -> String
 toLLVMVar (name ::: ty) = toLLVMType ty ++ " " ++ show name
 
 data Ex f where

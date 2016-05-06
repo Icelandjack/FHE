@@ -76,11 +76,11 @@ import Operators
 -- works with operands `Op' that are either references (`Name') or
 -- constants (`ConstTru', `ConstFls', `ConstNum Int').
 compile ∷ ∀a. Exp a → Codegen Op
-
-compile (ArrIx arr index :: Exp elt) = do
+compile (ArrIx arr index) = undefined 
+compile (ArrIx (arr :: Exp (Arr elt)) index) = do
   let 
-      elementType :: Ty elt
-      elementType = getTy @elt
+      elementType :: Ty a
+      elementType = getTy @a
 
   array_val ← compile arr
   index_val ← {- i32toi64 =<< -} compile index
@@ -88,11 +88,11 @@ compile (ArrIx arr index :: Exp elt) = do
   buffer   ← getBuffer @elt array_val
 
   elt_ptr ← namedInstr "ptr" 
-    ("getelementptr "%string%" "%sh%", i32 "%op) (bufferType elementType) buffer index_val
+    ("getelementptr "%string%" "%sh%", i32 "%op) (bufferType @elt) buffer index_val
   -- namedOp "length" ("load i32* "%sh) elt_ptr
-  namedOp "val" ("load "%string%" "%sh) (bufferType elementType) elt_ptr
+  namedOp "val" ("load "%string%" "%sh) (bufferType @elt) elt_ptr
 
-compile (Arr len var (ixf :: Exp elt)) = mdo
+compile (MkArr len var (ixf :: Exp (Sca elt))) = mdo
   entry   ← getBlock
   loop_1  ← newBlock "arr.loop1"
   loop_2  ← newBlock "arr.loop2"
@@ -121,7 +121,7 @@ compile (Arr len var (ixf :: Exp elt)) = mdo
   setBlock loop_2 
 
   ptr ← namedInstr "ptr" 
-    ("getelementptr "%string%" " %sh% ", i32 " %sh) (bufferType (getTy @elt)) buffer i₀
+    ("getelementptr "%string%" " %sh% ", i32 " %sh) (bufferType @elt) buffer i₀
 
   value    ← compile (rename var i₀ ixf)
   loop_2'  ← getBlock
@@ -141,14 +141,11 @@ compile (MkInt8  val) =
 compile (MkInt32 val) = 
   pure (ConstNum val)
 
-compile Tru = 
+compile Tru =
   pure ConstTru
 
 compile Fls = 
   pure ConstFls
-
-compile (MkChar ch) = 
-  error "no operand for CHAR"
 
 compile (If cond tru fls) = do
   if_then ← newBlock "if.then"
@@ -224,7 +221,7 @@ compile (MkVar (id ::: _)) =
   pure (Reference id)
 
 -- TODO: Constant fold this before passing to compile.
-compile (Len (Arr len _ _)) = do
+compile (Len (MkArr len _ _)) = do
   compile len
 
 compile (UnOp (Un operator _) a) = do
@@ -240,8 +237,8 @@ compile (BinOp (Bin operator _) a b) = do
 -- http://www.stephendiehl.com/llvm/#if-expressions
 
 compile _ = error "compile: ..."
--- -- compile (Lam n body) = 
--- --   error "compile (Lam n body)
+-- compile (Lam n body) = 
+--   error "compile (Lam n body)
 
 compileExpression :: forall ty. Exp ty -> CodegenState
 compileExpression exp = execCodegen $ do
@@ -252,10 +249,10 @@ compileExpression exp = execCodegen $ do
 
   -- Return array through `out' parameter
   case returnType of
-    A B  -> instr_ ("store %Arr1* "%sh%", %Arr1** %out_0") reg
-    A I  -> instr_ ("store %Arr* " %sh%", %Arr** %out_0") reg
-    A I8 -> instr_ ("store %Arr8* "%sh%", %Arr8** %out_0") reg
-    _    -> pure ()
+    ArrRep (NotRep BoolRep) -> instr_ ("store %Arr1* "%sh%", %Arr1** %out_0") reg
+    ArrRep (NumRep I32Rep)  -> instr_ ("store %Arr* " %sh%", %Arr** %out_0") reg
+    ArrRep (NumRep I8Rep)   -> instr_ ("store %Arr8* "%sh%", %Arr8** %out_0") reg
+    _                       -> pure ()
 
   terminate ("ret "%s%" "%op) (toLLVMType returnType) reg
 
@@ -265,13 +262,13 @@ foobarDef expression args = do
       returnType = ex (toLLVMType . getType') expression
 
       argList :: [String]
-      argList -- = map (ex show) args
-        | returnType == "%Arr1*" 
-        = map (ex toLLVMVar) ( Ex (Id "out" 0 ::: A (A B)) : args )
-        | returnType == "%Arr*" 
-        = map (ex toLLVMVar) ( Ex (Id "out" 0 ::: A (A I)) : args )
-        | returnType == "%Arr8*" 
-        = map (ex toLLVMVar) ( Ex (Id "out" 0 ::: A (A I8)) : args )
+      argList
+        -- | returnType == "%Arr1*" 
+        -- = map (ex toLLVMVar) ( Ex (Id "out" 0 ::: A (A B)) : args )
+        -- | returnType == "%Arr*" 
+        -- = map (ex toLLVMVar) ( Ex (Id "out" 0 ::: A (A I)) : args )
+        -- | returnType == "%Arr8*" 
+        -- = map (ex toLLVMVar) ( Ex (Id "out" 0 ::: A (A I8)) : args )
         | otherwise 
         = map (ex toLLVMVar) args
 
@@ -306,13 +303,13 @@ initialiseVar :: Ex V -> Writer [String] ()
 initialiseVar (Ex (varName ::: varTy)) =
   case varTy of
 
-  I8 -> 
+  ScaRep (NumRep I8Rep) -> 
     indented (shown%" = add i8 0, " %shown) varName (8::Int)
 
-  I -> 
+  ScaRep (NumRep I32Rep) -> 
     indented (shown%" = add i32 0, " %shown) varName (32::Int)
 
-  A I -> do
+  ScaRep (NumRep I32Rep) -> do
     indented (shown%"_mem  = call i8* @malloc(i32 80000)") varName
     indented (shown%"  = bitcast i8* "%shown%"_mem to %Arr*") varName varName
     indented (shown%"_mem2 = call i8* @malloc(i32 80000)") varName
@@ -350,7 +347,7 @@ initialiseVar (Ex (varName ::: varTy)) =
 
       sh → error ("ERROR: initialiseVar: " ++ show sh)
 
-  A B → error "HI"
+  ScaRep (NotRep BoolRep) → error "ERROR: [Bool] in arg"
   
   varType -> 
     error ("ERROR2: initialiseVar: " ++ show varName ++ " " ++ show varType)
@@ -361,16 +358,16 @@ mainDef expression args = do
       returnType = ex (toLLVMType . getType') expression
 
       isArray :: Bool
-      isArray = ex ((\case A{} -> True; _ -> False) . getType') expression
+      isArray = ex ((\case ArrRep{} -> True; _ -> False) . getType') expression
 
       argList :: [String]
       argList 
-        | returnType == "%Arr1*" 
-        = map (ex toLLVMVar) ( Ex (Id "arr1mem" 0 ::: A (A B)) : args )
-        | returnType == "%Arr*" 
-        = map (ex toLLVMVar) ( Ex (Id "arrmem" 0 ::: A (A I)) : args )
-        | returnType == "%Arr8*" 
-        = map (ex toLLVMVar) ( Ex (Id "arr8mem" 0 ::: A (A I8)) : args )
+        -- | returnType == "%Arr1*" 
+        -- = map (ex toLLVMVar) ( Ex (Id "arr1mem" 0 ::: A (A B)) : args )
+        -- | returnType == "%Arr*" 
+        -- = map (ex toLLVMVar) ( Ex (Id "arrmem" 0 ::: A (A I)) : args )
+        -- | returnType == "%Arr8*" 
+        -- = map (ex toLLVMVar) ( Ex (Id "arr8mem" 0 ::: A (A I8)) : args )
         | otherwise 
         = map (ex toLLVMVar) args
 
@@ -379,24 +376,24 @@ mainDef expression args = do
   initialiseVars args
 
   case expression of
-    Ex (getType' → A B)  → do
+    Ex (getType' → ScaRep (NotRep BoolRep))  → do
       indented "%arr1mem_0 = alloca %Arr1*"
-    Ex (getType' → A I)  → do
+    Ex (getType' → ScaRep (NumRep I32Rep))  → do
       indented "%arrmem_0 = alloca %Arr*"
-    Ex (getType' → A I8) → do
+    Ex (getType' → ScaRep (NumRep I8Rep)) → do
       indented "%arr8mem_0 = alloca %Arr8*"
     _                    → pure ()
 
   indented ("%1 = call "%s%" @foobar("%comma%")") returnType argList
 
   case expression of
-    Ex (getType' → A B)  → do
+    Ex (getType' → ScaRep (NotRep BoolRep))  → do
       indented "%arr1 = load %Arr1** %arr1mem_0"
       indented "call void @printArr1(%Arr1* %arr1)"
-    Ex (getType' → A I)  → do
+    Ex (getType' → ScaRep (NumRep I32Rep))  → do
       indented "%arr = load %Arr** %arrmem_0"
       indented "call void @printArr(%Arr* %arr)"
-    Ex (getType' → A I8) → do
+    Ex (getType' → ScaRep (NumRep I8Rep)) → do
       indented "%arr8 = load %Arr8** %arr8mem_0"
       indented "call void @printArr8(%Arr8* %arr8)"
     _                    → pure ()
@@ -410,10 +407,10 @@ mainDef expression args = do
 run :: GetArgs a => a -> IO ()
 run = getOutput >=> putStrLn
 
-run8 ∷ Exp Int8 → IO ()
+run8 ∷ Exp TInt8 → IO ()
 run8 = run
 
-run32 ∷ Exp Int → IO ()
+run32 ∷ Exp TInt → IO ()
 run32 = run
 
 runRead :: (GetArgs a, Read b) => a -> IO b
@@ -437,15 +434,15 @@ msg exp = do
        "/tmp/foo"])
     & void
 
-code8   = code @(Exp Int8)
-code88  = code @(Exp Int8 → Exp Int8)
-code888 = code @(Exp Int8 → Exp Int8 → Exp Int8)
-code32  = code @(Exp Int)
-msg8    = msg  @(Exp Int8)
-msg88   = msg  @(Exp Int8 → Exp Int8)
-msgII   = msg  @(Exp Int → Exp Int)
-msg888  = msg  @(Exp Int8 → Exp Int8 → Exp Int8)
-msg32   = msg  @(Exp Int)
+-- code8   = code @(Exp Int8)
+-- code88  = code @(Exp Int8 → Exp Int8)
+-- code888 = code @(Exp Int8 → Exp Int8 → Exp Int8)
+-- code32  = code @(Exp Int)
+-- msg8    = msg  @(Exp Int8)
+-- msg88   = msg  @(Exp Int8 → Exp Int8)
+-- msgII   = msg  @(Exp Int → Exp Int)
+-- msg888  = msg  @(Exp Int8 → Exp Int8 → Exp Int8)
+-- msg32   = msg  @(Exp Int)
 
 -- To use, run 'msg'
 runPure' :: forall a. GetArgs a => a -> Writer [String] ()
@@ -472,80 +469,80 @@ getOutput exp_fn = do
     Stdout output → output
     foo           → show foo
 
-map2 :: (GetTy a, GetTy b, GetTy c) => (Exp a -> Exp b -> Exp c) -> (Exp [a] -> Exp [b] -> Exp [c])
-map2 (¤) xs ys = arr (Len xs `min'` Len ys) (\i -> (xs!i) ¤ (ys!i))
+-- -- map2 :: (GetTy a, GetTy b, GetTy c) => (Exp a -> Exp b -> Exp c) -> (Exp [a] -> Exp [b] -> Exp [c])
+-- -- map2 (¤) xs ys = arr (Len xs `min'` Len ys) (\i -> (xs!i) ¤ (ys!i))
 
-otp :: Exp [Int] -> Exp [Int] -> Exp [Int]
-otp = map2 Xor
+-- -- otp :: Exp [Int] -> Exp [Int] -> Exp [Int]
+-- -- otp = map2 Xor
 
-otp' :: (GetTy c, B.Bits c) => Exp [c] -> Exp [c] -> Exp [c]
-otp' = map2 Xor
+-- -- otp' :: (GetTy c, B.Bits c) => Exp [c] -> Exp [c] -> Exp [c]
+-- -- otp' = map2 Xor
 
-add :: Exp Int8 -> _
-add = (+)
+-- -- add :: Exp Int8 -> _
+-- -- add = (+)
 
--- foo :: forall a. [a] -> forall b. [b] -> Int
--- foo xs ys = length xs + length ys
+-- -- foo :: forall a. [a] -> forall b. [b] -> Int
+-- -- foo xs ys = length xs + length ys
 
-arr342 :: Exp [Int]
-arr342 = 
-  arr 3 $ \ix → If (0 `Equal` ix) 3
-        $       If (1 `Equal` ix) 4 
-        $                         2
+-- -- arr342 :: Exp [Int]
+-- -- arr342 = 
+-- --   arr 3 $ \ix → If (0 `Equal` ix) 3
+-- --         $       If (1 `Equal` ix) 4 
+-- --         $                         2
 
-id' :: forall a. GetTy a => Exp a -> Exp a
-id' x = 
-  case getTy @a of
-    I -> If (42 ◃Equal @_ @Int▹ 5 ◃Equal▹ Fls) x 42
-    _ -> If Fls x x
+-- -- id' :: forall a. GetTy a => Exp a -> Exp a
+-- -- id' x = 
+-- --   case getTy @a of
+-- --     I -> If (42 ◃Equal @_ @Int▹ 5 ◃Equal▹ Fls) x 42
+-- --     _ -> If Fls x x
 
-(≟) :: forall ty₁ ty₂. (GetTy ty₁, GetTy ty₂) => Maybe (ty₁ :~: ty₂)
-(≟) = 
-  case (getTy @ty₁, getTy @ty₂) of
-    (I8, I8) -> Just Refl
-    (I, I) -> Just Refl
-    (F, F) -> Just Refl
-    (D, D) -> Just Refl
-    (B, B) -> Just Refl
-    (C, C) -> Just Refl
-    -- (A (a1 :: Ty t1), A (a2 :: Ty t2)) -> do
-    --   Refl ← (≟) @t1 @t2
-    --   pure Refl
-    (P x1 y1, P x2 y2) -> do
-      Refl ← (≟) @ty₁ @ty₂
-      pure Refl
+-- -- (≟) :: forall ty₁ ty₂. (GetTy ty₁, GetTy ty₂) => Maybe (ty₁ :~: ty₂)
+-- -- (≟) = 
+-- --   case (getTy @ty₁, getTy @ty₂) of
+-- --     (I8, I8) -> Just Refl
+-- --     (I, I) -> Just Refl
+-- --     (F, F) -> Just Refl
+-- --     (D, D) -> Just Refl
+-- --     (B, B) -> Just Refl
+-- --     (C, C) -> Just Refl
+-- --     -- (A (a1 :: Ty t1), A (a2 :: Ty t2)) -> do
+-- --     --   Refl ← (≟) @t1 @t2
+-- --     --   pure Refl
+-- --     (P x1 y1, P x2 y2) -> do
+-- --       Refl ← (≟) @ty₁ @ty₂
+-- --       pure Refl
 
-(·≟·) :: Ty (ty₁ :: Type) → Ty (ty₂ :: Type) → Maybe (ty₁ :~: ty₂)
-I8  ·≟· I8  = pure Refl
-I   ·≟· I   = pure Refl
-F   ·≟· F   = pure Refl
-D   ·≟· D   = pure Refl
-B   ·≟· B   = pure Refl
-C   ·≟· C   = pure Refl
-A x ·≟· A y = do
-  Refl ← x ·≟· y
-  pure Refl
--- P (x1 :: Ty a1) (x2 :: Ty a2) ·≟· P (y1 :: Ty b1) (y2 :: Ty b2) = do
---   Refl ← x1 ·≟· y1
---   Refl ← x2 ·≟· y2 
---   undefined 
+-- -- (·≟·) :: Ty (ty₁ :: Type) → Ty (ty₂ :: Type) → Maybe (ty₁ :~: ty₂)
+-- -- I8  ·≟· I8  = pure Refl
+-- -- I   ·≟· I   = pure Refl
+-- -- F   ·≟· F   = pure Refl
+-- -- D   ·≟· D   = pure Refl
+-- -- B   ·≟· B   = pure Refl
+-- -- C   ·≟· C   = pure Refl
+-- -- A x ·≟· A y = do
+-- --   Refl ← x ·≟· y
+-- --   pure Refl
+-- -- -- P (x1 :: Ty a1) (x2 :: Ty a2) ·≟· P (y1 :: Ty b1) (y2 :: Ty b2) = do
+-- -- --   Refl ← x1 ·≟· y1
+-- -- --   Refl ← x2 ·≟· y2 
+-- -- --   undefined 
 
-equal :: forall ty₁ ty₂. (GetTy ty₁, GetTy ty₂) => Exp ty₁ -> Exp ty₂ → Exp Bool
-equal exp₁ exp₂ = fromMaybe Fls $ do
-  case (getTy @ty₁, getTy @ty₂) of
+-- -- equal :: forall ty₁ ty₂. (GetTy ty₁, GetTy ty₂) => Exp ty₁ -> Exp ty₂ → Exp Bool
+-- -- equal exp₁ exp₂ = fromMaybe Fls $ do
+-- --   case (getTy @ty₁, getTy @ty₂) of
 
-u :: Exp Int -> Exp [Int]
-u n = arr n id
+-- -- u :: Exp Int -> Exp [Int]
+-- -- u n = arr n id
 
-test :: IO Bool
-test = runRead @(Exp Int) (If Tru 42 0)  
-  <&> (== 42)
+-- -- test :: IO Bool
+-- -- test = runRead @(Exp Int) (If Tru 42 0)  
+-- --   <&> (== 42)
 
-uu :: Exp [Int] -> Exp [Int]
-uu xs = 
-    xs
-  ◃map2 (+)▹
-    fromList [If Fls 1 666,If (id' Tru) 353 2,If (id' Fls) (id' 3) (id' 555), 5]
-  ◃map2 (+)▹
-    fromList [id' 10,id' 20,id' 30,id' 40, 50]
+-- -- uu :: Exp [Int] -> Exp [Int]
+-- -- uu xs = 
+-- --     xs
+-- --   ◃map2 (+)▹
+-- --     fromList [If Fls 1 666,If (id' Tru) 353 2,If (id' Fls) (id' 3) (id' 555), 5]
+-- --   ◃map2 (+)▹
+-- --     fromList [id' 10,id' 20,id' 30,id' 40, 50]
 

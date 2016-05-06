@@ -340,12 +340,12 @@ rename old new originalExp = case originalExp of
         (rename old new body)
         (rename old new init)
   
-  Arr len name val 
+  MkArr len name val 
     | name == old
     → originalExp
     
     | otherwise 
-    → Arr 
+    → MkArr 
         (rename old new len)
         name
         (rename old new val)
@@ -433,25 +433,25 @@ terminate = runFormat ?? \txtBuilder → do
   currBlock.terminator .= newTerminator
 
 -- | Emit a binary operation.
-createBinop ∷ String → Ty a → Op → Op → Codegen Op
-createBinop op ty =  
+createBinop ∷ ∀a. GetTy a => String → Op → Op → Codegen Op
+createBinop op =  
   namedOp (last (words op))
-    (s% " " %s% " " %sh% ", " %sh) op (toLLVMType ty)
+    (s% " " %s% " " %sh% ", " %sh) op (toLLVMType (getTy @a))
 
 -- | Compiles a unary operation.
 compileUnop ∷ forall a b. UnOp a b → Op → Codegen Op
 compileUnop = \case
-  OpNot → 
-    createBinop "xor" B ConstTru
-  OpNeg → do
-    let numberToOp ∷ Ty a → Integer → Op
-        numberToOp I8 = ConstNum8 . fromInteger 
-        numberToOp I  = ConstNum  . fromInteger 
+  -- OpNot → 
+  --   createBinop "xor" B ConstTru
+  -- OpNeg → do
+  --   let numberToOp ∷ Ty a → Integer → Op
+  --       numberToOp I8 = ConstNum8 . fromInteger 
+  --       -- numberToOp I  = ConstNum  . fromInteger 
 
-    let numType :: Ty a
-        numType = getNum
+  --   let numType :: Ty a
+  --       numType = getNum
 
-    createBinop "sub" numType (numberToOp numType 0)
+  --   createBinop "sub" numType (numberToOp numType 0)
 
   OpFst → 
     π(0) 
@@ -481,37 +481,37 @@ getLength nm = do
 compileBinop ∷ forall a b c. BinOp a b c → Op → Op → Codegen Op
 compileBinop = \case
   OpAdd → 
-    createBinop "add" (getNum @a)
+    createBinop @a "add" 
   OpSub → 
-    createBinop "sub" (getNum @a)
+    createBinop @a "sub"
   OpMul → 
-    createBinop "mul" (getNum @a)
+    createBinop @a "mul" 
 
   OpEqual → 
-    createBinop "icmp eq" (getSca @a)
+    createBinop @a "icmp eq" 
   OpNotEqual → 
-    createBinop "icmp ne" (getSca @a)
+    createBinop @a "icmp ne"
   OpLessThan → 
-    createBinop "icmp slt" (getSca @a)
+    createBinop @a "icmp slt"
   OpLessThanEq → 
-    createBinop "icmp sle" (getSca @a)
+    createBinop @a "icmp sle" 
   OpGreaterThan → 
-    createBinop "icmp sgt" (getSca @a)
+    createBinop @a "icmp sgt" 
   OpGreaterThanEq → 
-    createBinop "icmp sge" (getSca @a)
+    createBinop @a "icmp sge"
 
   -- a ∧ b = a * b
   OpAnd → 
-    createBinop "mul" B
+    createBinop @TBool "mul" 
 
   -- a ∨ b = a + b + ab
   OpOr → \a b → do
-    a_plus_b ← createBinop "add" B a b
-    a_mult_b ← createBinop "mul" B a b
-    createBinop "add" B a_plus_b a_mult_b
+    a_plus_b ← createBinop @TBool "add" a b
+    a_mult_b ← createBinop @TBool "mul" a b
+    createBinop @TBool "add" a_plus_b a_mult_b
 
   OpXor → 
-    createBinop "xor" (getTy @c)
+    createBinop @c "xor" 
 
   OpPair → let
     insNum ∷ Op → Op → Int → Codegen Op

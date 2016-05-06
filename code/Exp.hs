@@ -1,4 +1,4 @@
-{-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE UndecidableInstances, UndecidableSuperClasses #-}
 
 -- https://hackage.haskell.org/package/feldspar-language-0.7/docs/src/Feldspar-Core-Types.html
 
@@ -20,14 +20,18 @@ import Control.Lens
 
 import Util
 
+import Data.Kind
+import Data.Type.Equality
+import Data.Constraint
+
 -- | AST
 data Exp a where
-  Constant ∷ GetSca a => Ty a → a → Exp a
+  Constant :: GetSca a => Ty (Sca a) → ScaToType a → Exp (Sca a)
+  MkVar    :: V a -> Exp a
 
-  MkVar ∷ V a → Exp a
+  Pi   :: Fr a -> Exp (Sca (Number (Fra a)))
 
   -- Operators
-  -- ConOp ∷ Construct a     → Exp a
   UnOp  ∷ Unary   a b     → (Exp a → Exp b)
   BinOp ∷ Binary  a b c   → (Exp a → Exp b → Exp c)
   TerOp ∷ Ternary a b c d → (Exp a → Exp b → Exp c → Exp d)
@@ -59,126 +63,139 @@ data Exp a where
 -- fails on 'Fls' or what ever.
 -- 
 -- Interesting question, answer when sober.
-pattern ANum   ∷ GetNum a => Num a => a -> Exp a
+pattern ANum :: GetNum n => Num (NumToType n) => NumToType n -> Exp (Sca (Number n))
 pattern ANum n = Constant CheckNum n
 
-pattern Var :: GetTy t => () => Id → Exp t
-pattern Var id ← MkVar (id ::: _    ) 
-  where Var id = MkVar (id ::: getTy)
+-- pattern Var :: GetTy t => () => Id → Exp t
+-- pattern Var id ← MkVar (id ::: _    ) 
+--   where Var id = MkVar (id ::: getTy)
 
--- Shorthands for operators
+-- -- Shorthands for operators
 unaryOp ∷ (GetTy a, GetTy b) 
         ⇒ UnOp a b 
-        → (a → b) 
+        → (ToType a → ToType b) 
         → (Exp a → Exp b)
 unaryOp op (¬) = UnOp (Un op (¬))
                               
 binaryOp ∷ (GetTy a, GetTy b, GetTy c) 
          ⇒ BinOp a b c 
-         → (a → b → c) 
+         → (ToType a → ToType b → ToType c) 
          → (Exp a → Exp b → Exp c)
 binaryOp op (•) = BinOp (Bin op (•))
 
-pattern MkInt8 :: () => (GetNum t, Int8 ~ t) => t -> Exp t
-pattern MkInt8 i₈ = Constant I8 i₈
+pattern MkInt8 :: () => TInt8 ~ a => ToType a -> Exp a
+pattern MkInt8 i₈ = Constant (ScaRep (NumRep I8Rep)) i₈
 
-pattern MkInt32 :: () => (GetNum t, Int ~ t) => t -> Exp t
-pattern MkInt32 i₃₂ = Constant I i₃₂
+pattern MkInt32 :: () => TInt32 ~ a => ToType a -> Exp a
+pattern MkInt32 i₃₂ = Constant (ScaRep (NumRep I32Rep)) i₃₂
 
-pattern MkFloat :: () => (GetNum t, Float ~ t) => t -> Exp t
-pattern MkFloat fl = Constant F fl
+pattern MkFloat :: () => TFloat ~ a => ToType a -> Exp a
+pattern MkFloat fl = Constant (ScaRep (NumRep (FraRep F32Rep))) fl
 
-pattern MkDouble :: () => (GetNum t, Double ~ t) => t -> Exp t
-pattern MkDouble fl = Constant D fl
+pattern MkDouble :: () => TDouble ~ a => ToType a -> Exp a
+pattern MkDouble fl = Constant (ScaRep (NumRep (FraRep F64Rep))) fl
 
-pattern MkBool :: () => (GetSca t, Bool ~ t) => t -> Exp t
-pattern MkBool bool = Constant B bool
+pattern MkBool :: () => TBool ~ a => ToType a -> Exp a
+pattern MkBool bool = Constant (ScaRep (NotRep BoolRep)) bool
 
-pattern MkChar :: () => (GetSca t, Char ~ t) => t -> Exp t
-pattern MkChar ch = Constant C ch
+-- -- http://ghc.haskell.org/trac/ghc/ticket/12017
+-- --   pattern Tru = MkBool True
+pattern Tru :: () => TBool ~ a => Exp a
+pattern Tru = Constant (ScaRep (NotRep BoolRep)) True
 
--- http://ghc.haskell.org/trac/ghc/ticket/12017
---   pattern Tru = MkBool True
-pattern Tru :: () => (Bool ~ t) => Exp t
-pattern Tru = Constant B True
+pattern Fls :: () => TBool ~ a => Exp a
+pattern Fls = Constant (ScaRep (NotRep BoolRep)) False
 
-pattern Fls :: () => (Bool ~ t) => Exp t
-pattern Fls = Constant B False
-
--- TODO: Change to multi-equation form for next GHC version.
-pattern Not ∷ () ⇒ (Bool ~ a) ⇒ Exp a → Exp Bool
+-- -- TODO: Change to multi-equation form for next GHC version.
+pattern Not ∷ () ⇒ TBool ~ a ⇒ Exp a → Exp a
 pattern Not b ← UnOp (Un OpNot _) b 
   where Not Tru       = Fls
         Not (Not Fls) = Tru
         Not (Not b)   = b
         Not b         = unaryOp OpNot not b
 
-pattern Xor :: (GetTy c, Bits c) => Exp c -> Exp c -> Exp c
+pattern Xor :: (GetTy c, Bits (ToType c)) => Exp c -> Exp c -> Exp c
 pattern Xor x y <- BinOp (Bin OpXor _) x y
   where Xor x y =  binaryOp OpXor xor x y
         
-pattern Equal :: forall z. () => forall a. (GetSca a, Bool ~ z) => Exp a -> Exp a -> Exp z
+pattern Equal :: forall z. () => forall a. (GetSca a, TBool ~ z) => Exp (Sca a) -> Exp (Sca a) -> Exp z
 pattern Equal x y <- BinOp (Bin OpEqual _) x y 
   where Equal x y = binaryOp OpEqual (==) x y
 
-pattern NotEqual :: () => (GetSca a, Bool ~ z) => Exp a -> Exp a -> Exp z
-pattern NotEqual x y <- BinOp (Bin OpNotEqual _) x y where
-        NotEqual x y = binaryOp OpNotEqual (/=) x y
+pattern NotEqual :: () => (GetSca a, TBool ~ z) => Exp (Sca a) -> Exp (Sca a) -> Exp z
+pattern NotEqual x y <- BinOp (Bin OpNotEqual _) x y 
+  where NotEqual x y = binaryOp OpNotEqual (/=) x y
 
-pattern LessThan :: () => (GetSca a, Bool ~ z) => Exp a -> Exp a -> Exp z
+pattern LessThan :: () => (GetSca a, TBool ~ z) => Exp (Sca a) -> Exp (Sca a) -> Exp z
 pattern LessThan x y <- BinOp (Bin OpLessThan _) x y 
   where LessThan x y = binaryOp OpLessThan (<) x y
 
-pattern LessThanEq :: () => (GetSca a, Bool ~ z) => Exp a -> Exp a -> Exp z
+pattern LessThanEq :: () => (GetSca a, TBool ~ z) => Exp (Sca a) -> Exp (Sca a) -> Exp z
 pattern LessThanEq x y <- BinOp (Bin OpLessThanEq _) x y 
   where LessThanEq x y = binaryOp OpLessThanEq (<=) x y
 
-pattern GreaterThan :: () => (GetSca a, Bool ~ z) => Exp a -> Exp a -> Exp z
+pattern GreaterThan :: () => (GetSca a, TBool ~ z) => Exp (Sca a) -> Exp (Sca a) -> Exp z
 pattern GreaterThan x y <- BinOp (Bin OpGreaterThan _) x y 
   where GreaterThan x y = binaryOp OpGreaterThan (>) x y
 
-pattern GreaterThanEq :: () => (GetSca a, Bool ~ z) => Exp a -> Exp a -> Exp z
+pattern GreaterThanEq :: () => (GetSca a, TBool ~ z) => Exp (Sca a) -> Exp (Sca a) -> Exp z
 pattern GreaterThanEq x y <- BinOp (Bin OpGreaterThanEq _) x y
   where GreaterThanEq x y = binaryOp OpGreaterThanEq (>=) x y
 
-pattern If ∷ () ⇒ GetTy a ⇒ Exp Bool → Exp a → Exp a → Exp a
+pattern If ∷ () ⇒ GetTy a ⇒ Exp TBool → Exp a → Exp a → Exp a
 pattern If cond t e ← TerOp (Ter OpIf _                            ) cond t e 
   where If cond t e = TerOp (Ter OpIf $ \b x y → if b then x else y) cond t e
 
-pattern Pair :: () => (GetTy p1, GetTy p2, t ~ (p1, p2)) => Exp p1 -> Exp p2 -> Exp t
-pattern Pair a b ← BinOp (Bin OpPair _)   a b 
-  where Pair a b = BinOp (Bin OpPair (,)) a b
+pattern MkPair :: () => (GetSca p1, GetSca p2, t ~ Pair p1 p2) => Exp (Sca p1) -> Exp (Sca p2) -> Exp t
+pattern MkPair a b ← BinOp (Bin OpPair _)   a b 
+  where MkPair a b = BinOp (Bin OpPair (,)) a b
 
-pattern Fst :: () => (GetTy a, GetTy b) => Exp (a, b) -> Exp a
+pattern Fst :: () => (GetSca a, GetSca b) => Exp (Pair a b) -> Exp (Sca a)
 pattern Fst pair ← UnOp (Un OpFst _)   pair 
   where Fst pair = UnOp (Un OpFst fst) pair
 
-pattern Snd :: () => (GetTy a, GetTy b) => Exp (a, b) -> Exp b
+pattern Snd :: () => (GetSca a, GetSca b) => Exp (Pair a b) -> Exp (Sca b)
 pattern Snd pair ← UnOp (Un OpSnd _  ) pair 
   where Snd pair = UnOp (Un OpSnd snd) pair
 
-pattern While ∷ () ⇒ GetTy s ⇒ Id → Exp Bool → Exp s → Exp s → Exp s
+pattern While ∷ () ⇒ GetTy s ⇒ Id → Exp TBool → Exp s → Exp s → Exp s
 pattern While name cond init body ← TerOp (Ter (OpWhile name) _) cond init body 
   where While name                = TerOp (Ter (OpWhile name) (error "while"))
 
-pattern Len :: () => (GetTy a, GetTy t, t ~ Int) => Exp [a] -> Exp t
+pattern Len :: () => (GetSca a, t ~ TInt32) => Exp (Arr a) -> Exp t
 pattern Len xs <- UnOp (Un OpLen _)             xs 
   where Len xs =  UnOp (Un OpLen genericLength) xs
 
--- Arr ∷ GetTy a ⇒ Exp Int32 → Name → Exp a → Exp [a]
-pattern Arr ∷ () ⇒ (GetTy a, as ~ [a]) ⇒ Exp Int → Id → Exp a → Exp as
-pattern Arr len name body ← BinOp (Bin (OpArr name) _)             len body 
-  where Arr len name body = BinOp (Bin (OpArr name) (error "arr")) len body
+pattern MkArr :: () => (GetSca a, t ~ Arr a) => Exp TInt32 -> Id -> Exp (Sca a) -> Exp t
+pattern MkArr len name body ← BinOp (Bin (OpArr name) _)             len body 
+  where MkArr len name body = BinOp (Bin (OpArr name) (error "arr")) len body
 
--- ArrIx ∷ GetTy a ⇒ Exp [a] → Exp Int32 → Exp a
-(!) :: GetTy a => Exp [a] -> Exp Int -> Exp a
+(!) :: GetSca a => Exp (Arr a) -> Exp TInt32 -> Exp (Sca a)
 (!) = ArrIx
 
-pattern ArrIx ∷ () ⇒ GetTy a ⇒ Exp [a] → Exp Int → Exp a
+-- TRAC:
+--   What are this pattern synonym's parameters
+--
+-- ArrIx          :: forall {a :: TSca}. GetSca a => Exp (Arr a) -> Exp TInt32 -> Exp (Sca a)
+-- ArrIx @(Sca _) :: forall {a :: TSca}. GetSca a => Exp ('Arr a) -> Exp TInt32 -> Exp ('Sca a)
+--   HERE @(Sca _) IS FORCED, IT INSTANTIATES a1 AND a1 MUST EQUAL Sca a
+-- ArrIx @(Sca (Number _)) :: forall {t :: TNum}. 
+--   GetNum t => Exp (Arr (Number t)) 
+--            -> Exp TInt32 
+--            -> Exp (Sca (Number t))
+--   NOW THE NEXT PARAMETER MUST BE (Number _)
+-- ArrIx @(Sca (Number _a)) @(Number _a) :: forall {t :: TNum}.
+--   GetNum t => Exp (Arr (Number t)) 
+--            -> Exp TInt32 
+--            -> Exp (Sca (Number t))
+--
+-- This is weird... I want 'a1' to appear LAST, 'a' is what matters
+--   TODO add this to trac please, simplified
+pattern ArrIx ∷ ∀a1. () ⇒ ∀a. (GetSca a, a1 ~ Sca a) ⇒ Exp (Arr a) → Exp TInt32 → Exp a1
 pattern ArrIx xs index ← BinOp (Bin OpArrIx _)                            xs index 
   where ArrIx xs index = BinOp (Bin OpArrIx (\xs i → xs!!fromIntegral i)) xs index
 
----------------------------------------------------------------------undefined ---
+------------------------------------------------------------------------
 -- Instances                                                          --
 ------------------------------------------------------------------------
 instance Show (Exp a) where
@@ -191,7 +208,7 @@ instance Show (Exp a) where
 
     While n c b i → 
       printf "while [%s = %s] (%s) { %s }" (show n) (show i) (show c) (show b)
-    Arr l n ixf → 
+    MkArr l n ixf → 
       printf "(%s for %s in 0…%s)" (show ixf) (show n) (show l)
 
     -- Constant 42 of type "Int8"  should be displayed: 42₈
@@ -218,25 +235,28 @@ instance Show (Exp a) where
 
     -- App a b          → printf "%s · %s" (show a) (show b)
     -- Lam n body       → printf "(%s ↦ %s)" (show n) (show body)
-    
-    _               → error "instance Show (Exp a)"
 
-instance GetNum n => Num (Exp n) where
-  (+) :: Exp n -> Exp n -> Exp n
-  x      + y      = binaryOp OpAdd (+) x y
-  --
+    Pi a -> "π" ++ subscript (ScaRep (NumRep (FraRep a)))
+    _ -> error "instance Show (Exp a)"
+
+type a `NumberHas`     num = (GetNum num, a ~ Sca (Number num))
+type a `FractionalHas` fra = (GetFra fra, a ~ Sca (Number (Fra fra)))
+
+instance a `NumberHas` num => Num (Exp a) where
+  (+) :: Exp a -> Exp a -> Exp a
   ANum 0 + y      = y
   x      + ANum 0 = x
   ANum a + ANum b = ANum (a + b)
+  x      + y      = binaryOp OpSub (-) x y
 
-  (-) ∷ Exp n → Exp n → Exp n
+  (-) :: Exp a -> Exp a -> Exp a
   a      - b      = binaryOp OpSub (-) a b
   --
   x      - ANum 0 = x
   ANum 0 - y      = negate y
   ANum a - ANum b = ANum (a - b)
 
-  (*) ∷ Exp n → Exp n → Exp n
+  (*) ∷ Exp a → Exp a → Exp a
   a      * b      = binaryOp OpMul (*) a b
   -- 
   ANum 0 * _      = 0
@@ -245,29 +265,37 @@ instance GetNum n => Num (Exp n) where
   x      * ANum 1 = x
   ANum a * ANum b = ANum (a * b)
 
-  negate ∷ Exp n → Exp n
-  -- negate (ANum i) = ANum (negate i)
+  negate :: Exp a → Exp a
+  negate (ANum i) = ANum (negate i)
   negate i        = unaryOp OpNeg negate i
 
-  fromInteger ∷ Integer → Exp n
+  fromInteger :: Integer → Exp a
   fromInteger = ANum . fromInteger
 
   abs    = error "Num: no 'abs' method for 'Exp num'"
 
   signum = error "Num: no 'signum' method for 'Exp num'"
 
+instance a `FractionalHas` fra => Fractional (Exp a) where
+  (/) :: Exp a -> Exp a -> Exp a
+  (/) = binaryOp OpDiv (/)
+
+instance a `FractionalHas` fra => Floating (Exp a) where
+  pi :: Exp a
+  pi = Pi getFra
+
 ------------------------------------------------------------------------
 -- Higher-Order Interface                                             --
 ------------------------------------------------------------------------
 
-while ∷ GetTy s ⇒ (Exp s → Exp Bool) → (Exp s → Exp s) → Exp s → Exp s
+while ∷ GetTy s ⇒ (Exp s → Exp TBool) → (Exp s → Exp s) → Exp s → Exp s
 while cond loop init = While (Lambda n) condBody loopBody init where
   n        = 1 + max (maxLam condBody) (maxLam loopBody)
   condBody = cond (MkVar (Lambda2 n))
   loopBody = loop (MkVar (Lambda2 n))
 
-arr ∷ GetTy a ⇒ Exp Int → (Exp Int → Exp a) → Exp [a]
-arr len ixf = Arr len (Lambda n) body where
+arr :: GetSca a => Exp TInt32 -> (Exp TInt32 -> Exp (Sca a)) -> Exp (Arr a)
+arr len ixf = MkArr len (Lambda n) body where
   n    = 1 + maxLam body
   body = ixf (MkVar (Lambda2 n))
 
@@ -276,7 +304,7 @@ maxLam = \case
   -- Binding constructs, variables and constants 
   -- Lam   (VarId n) _     → n 
   While (VarId n) _ _ _ → n 
-  Arr _ (VarId n) _     → n
+  MkArr _ (VarId n) _   → n
   MkVar{}               → 0
   Constant{}            → 0
 
@@ -293,7 +321,7 @@ maxLam = \case
   _                     → error ("maxLam: ")
 
 -- Predefined functions
-min' :: GetSca a => Exp a -> Exp a -> Exp a
+min' :: GetSca a => Exp (Sca a) -> Exp (Sca a) -> Exp (Sca a)
 min' a b = If (LessThan a b) a b
 
 getType' ∷ Exp ty → Ty ty
@@ -311,14 +339,14 @@ getType' = \case
 showExpType ∷ Exp ty → String
 showExpType = toLLVMType . getType'
 
--- getArgs ::                           (Exp ret)                   -> ARGS '[] ret
--- getArgs :: (GetTy a)            => (Exp a -> Exp ret)          -> ARGS '[a] ret
--- getArgs :: (GetTy a, GetTy b) => (Exp a -> Exp b -> Exp ret) -> ARGS '[a,b] ret
--- 
--- >>> getArgs ((+) @(Exp I8))
--- (%arg_1 : i8), (%arg_0 : i8), (NOARGS (%arg_1 +₈ %arg_0))
--- 
--- TODO: Reverse indices.
+-- -- getArgs ::                           (Exp ret)                   -> ARGS '[] ret
+-- -- getArgs :: (GetTy a)            => (Exp a -> Exp ret)          -> ARGS '[a] ret
+-- -- getArgs :: (GetTy a, GetTy b) => (Exp a -> Exp b -> Exp ret) -> ARGS '[a,b] ret
+-- -- 
+-- -- >>> getArgs ((+) @(Exp I8))
+-- -- (%arg_1 : i8), (%arg_0 : i8), (NOARGS (%arg_1 +₈ %arg_0))
+-- -- 
+-- -- TODO: Reverse indices.
 class GetArgs a where
   getArgs :: a -> (Ex Exp, [Ex V])
 
@@ -345,68 +373,68 @@ instance (GetTy a, GetArgs rest) => GetArgs (Exp a -> rest) where
 
     in (exp, Ex argument : restArgs)
 
--- -- -- -- -- getExpression :: ARGS types retTy -> Exp retTy
--- -- -- -- -- getExpression = \case
--- -- -- -- --   NOARGS exp     -> exp
--- -- -- -- --   ADDARGS _ rest -> getExpression rest
+-- -- -- -- -- -- getExpression :: ARGS types retTy -> Exp retTy
+-- -- -- -- -- -- getExpression = \case
+-- -- -- -- -- --   NOARGS exp     -> exp
+-- -- -- -- -- --   ADDARGS _ rest -> getExpression rest
 
--- -- -- -- -- ex :: (forall x. f x -> r) -> (Ex f -> r)
--- -- -- -- -- ex g (Ex fx) = g fx
+-- -- -- -- -- -- ex :: (forall x. f x -> r) -> (Ex f -> r)
+-- -- -- -- -- -- ex g (Ex fx) = g fx
 
--- -- -- -- -- -- argsNAME :: Traversal' (ARGS types retTy) Id
--- -- -- -- -- -- argsNAME f = \case
+-- -- -- -- -- -- -- argsNAME :: Traversal' (ARGS types retTy) Id
+-- -- -- -- -- -- -- argsNAME f = \case
+-- -- -- -- -- -- --   NOARGS exp -> 
+-- -- -- -- -- -- --     pure (NOARGS exp)
+
+-- -- -- -- -- -- --   ADDARGS (Id varName i ::: varTy) rest ->  -- do
+
+-- -- -- -- -- --     -- let u :: Ex V
+-- -- -- -- -- --     --     u = Ex (N varName i ::: varTy)
+
+-- -- -- -- -- --     -- -- ex :: Ex V <- f u
+
+-- -- -- -- -- --     -- return (ADDARGS ) -- ADDARGS <$> (VAR ty <$> f name) <*> argsName f rest
+
+-- -- -- -- -- -- getFormattedArgs :: ARGS types retTy -> [String]
+-- -- -- -- -- -- getFormattedArgs = \case
+-- -- -- -- -- --   NOARGS  exp -> 
+-- -- -- -- -- --     []
+
+-- -- -- -- -- --   ADDARGS (id ::: ty) rest -> 
+-- -- -- -- -- --     (showTy ty ++ " " ++ show id) : getFormattedArgs rest
+
+-- -- -- -- -- -- argsId :: Traversal' (ARGS types retTy) Id
+-- -- -- -- -- -- argsId f = \case
 -- -- -- -- -- --   NOARGS exp -> 
 -- -- -- -- -- --     pure (NOARGS exp)
 
--- -- -- -- -- --   ADDARGS (Id varName i ::: varTy) rest ->  -- do
+-- -- -- -- -- --   ADDARGS (id ::: ty) rest ->
+-- -- -- -- -- --     ADDARGS 
+-- -- -- -- -- --       <$> (f id <&> \id' -> id' ::: ty)
+-- -- -- -- -- --       <*> argsId f rest
 
--- -- -- -- --     -- let u :: Ex V
--- -- -- -- --     --     u = Ex (N varName i ::: varTy)
+-- -- -- -- -- -- instance Show (ARGS types retTy) where
+-- -- -- -- -- --   show (NOARGS exp) = 
+-- -- -- -- -- --     "(NOARGS " -- ++ show exp ++ ")"
 
--- -- -- -- --     -- -- ex :: Ex V <- f u
+-- -- -- -- -- --   -- show (ADDARGS name ty rest) = 
+-- -- -- -- -- --   --   "(" ++ show name ++ " : " ++ showTy ty ++ ")" ++ ", " ++ show rest
 
--- -- -- -- --     -- return (ADDARGS ) -- ADDARGS <$> (VAR ty <$> f name) <*> argsName f rest
+-- -- -- -- -- -- allargs :: ARGS '[I8, I8, I8, I8, I8] I8
+-- -- -- -- -- -- allargs = 
+-- -- -- -- -- --   getArgs ((\a b c d e -> a+b+c+d+e) :: Exp I8 -> Exp I8 -> Exp I8 -> Exp I8 -> Exp I8 -> Exp I8)
 
--- -- -- -- -- getFormattedArgs :: ARGS types retTy -> [String]
--- -- -- -- -- getFormattedArgs = \case
--- -- -- -- --   NOARGS  exp -> 
--- -- -- -- --     []
+-- -- -- -- -- -- type EI8  = Exp Int8
 
--- -- -- -- --   ADDARGS (id ::: ty) rest -> 
--- -- -- -- --     (showTy ty ++ " " ++ show id) : getFormattedArgs rest
+-- fromList :: GetSca a => [Exp a] -> Exp [a]
+-- fromList [] = arr 0 (\_ -> undefined)
+-- fromList xs = arr (genericLength xs) (foo 0 xs) where
 
--- -- -- -- -- argsId :: Traversal' (ARGS types retTy) Id
--- -- -- -- -- argsId f = \case
--- -- -- -- --   NOARGS exp -> 
--- -- -- -- --     pure (NOARGS exp)
-
--- -- -- -- --   ADDARGS (id ::: ty) rest ->
--- -- -- -- --     ADDARGS 
--- -- -- -- --       <$> (f id <&> \id' -> id' ::: ty)
--- -- -- -- --       <*> argsId f rest
-
--- -- -- -- -- instance Show (ARGS types retTy) where
--- -- -- -- --   show (NOARGS exp) = 
--- -- -- -- --     "(NOARGS " -- ++ show exp ++ ")"
-
--- -- -- -- --   -- show (ADDARGS name ty rest) = 
--- -- -- -- --   --   "(" ++ show name ++ " : " ++ showTy ty ++ ")" ++ ", " ++ show rest
-
--- -- -- -- -- allargs :: ARGS '[I8, I8, I8, I8, I8] I8
--- -- -- -- -- allargs = 
--- -- -- -- --   getArgs ((\a b c d e -> a+b+c+d+e) :: Exp I8 -> Exp I8 -> Exp I8 -> Exp I8 -> Exp I8 -> Exp I8)
-
--- -- -- -- -- type EI8  = Exp Int8
-
-fromList :: GetSca a => [Exp a] -> Exp [a]
-fromList [] = arr 0 (\_ -> undefined)
-fromList xs = arr (genericLength xs) (foo 0 xs) where
-
-  foo :: (GetSca a, GetNum b) => Exp b -> [Exp a] -> Exp b -> Exp a
-  foo n = \case
-    [x] → const x
-    x:xs → \ix → 
-      If (n `Equal` ix) 
-        x
-        (foo (n+1) xs ix)
+--   foo :: (GetSca a, GetNum b) => Exp b -> [Exp a] -> Exp b -> Exp a
+--   foo n = \case
+--     [x] → const x
+--     x:xs → \ix → 
+--       If (n `Equal` ix) 
+--         x
+--         (foo (n+1) xs ix)
 

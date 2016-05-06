@@ -65,17 +65,17 @@ import Numeric.Natural
 data Unary a b where
   Un ∷ (GetTy a, GetTy b) 
      ⇒ UnOp a b 
-     → (a → b) 
+     → (ToType a → ToType b) 
      → Unary a b
 
 data UnOp a b where
-  OpNot ∷ UnOp Bool Bool
-  OpNeg ∷ GetNum a => UnOp a a
+  OpNot ∷ UnOp TBool TBool
+  OpNeg ∷ GetNum a => UnOp (Sca (Number a)) (Sca (Number a))
 
-  OpFst ∷ (GetTy p1, GetTy p2) => UnOp (p1, p2) p1
-  OpSnd ∷ (GetTy p1, GetTy p2) => UnOp (p1, p2) p2
+  OpFst ∷ (GetSca p1, GetSca p2) => UnOp (Pair p1 p2) (Sca p1)
+  OpSnd ∷ (GetSca p1, GetSca p2) => UnOp (Pair p1 p2) (Sca p2)
 
-  OpLen ∷ GetTy a => UnOp [a] Int
+  OpLen ∷ GetSca a => UnOp (Arr a) TInt32
 
 instance Show (Unary a b) where
   show (Un op _function) = show op
@@ -84,10 +84,8 @@ instance Show (UnOp a b) where
   show = \case
     OpNot → "¬"
     OpNeg → "-"
-
     OpFst → "fst"
     OpSnd → "snd"
-
     OpLen → "len"
 
 ------------------------------------------------------------------------
@@ -96,41 +94,43 @@ instance Show (UnOp a b) where
 data Binary a b c where
   Bin ∷ (GetTy a, GetTy b, GetTy c) 
       ⇒ BinOp a b c 
-      → (a → b → c) 
+      → (ToType a → ToType b → ToType c) 
       → Binary a b c
 
 data BinOp a b c where
   -- Arithmetic
-  OpAdd ∷ GetNum a => BinOp a a a
-  OpSub ∷ GetNum a => BinOp a a a
-  OpMul ∷ GetNum a => BinOp a a a
+  OpAdd ∷ GetNum a => BinOp (Sca (Number a)) (Sca (Number a)) (Sca (Number a))
+  OpSub ∷ GetNum a => BinOp (Sca (Number a)) (Sca (Number a)) (Sca (Number a))
+  OpMul ∷ GetNum a => BinOp (Sca (Number a)) (Sca (Number a)) (Sca (Number a))
+  OpDiv ∷ GetFra a => BinOp (Sca (Number (Fra a))) (Sca (Number (Fra a))) (Sca (Number (Fra a)))
 
   -- Relational
-  OpEqual         ∷ GetSca a => BinOp a a Bool
-  OpNotEqual      ∷ GetSca a => BinOp a a Bool
-  OpLessThan      ∷ GetSca a => BinOp a a Bool
-  OpLessThanEq    ∷ GetSca a => BinOp a a Bool
-  OpGreaterThan   ∷ GetSca a => BinOp a a Bool
-  OpGreaterThanEq ∷ GetSca a => BinOp a a Bool
+  OpEqual         ∷ GetSca a => BinOp (Sca a) (Sca a) TBool
+  OpNotEqual      ∷ GetSca a => BinOp (Sca a) (Sca a) TBool
+  OpLessThan      ∷ GetSca a => BinOp (Sca a) (Sca a) TBool
+  OpLessThanEq    ∷ GetSca a => BinOp (Sca a) (Sca a) TBool
+  OpGreaterThan   ∷ GetSca a => BinOp (Sca a) (Sca a) TBool
+  OpGreaterThanEq ∷ GetSca a => BinOp (Sca a) (Sca a) TBool
 
   -- Logical
-  OpAnd ∷ BinOp Bool Bool Bool
-  OpOr  ∷ BinOp Bool Bool Bool
+  OpAnd ∷ BinOp TBool TBool TBool
+  OpOr  ∷ BinOp TBool TBool TBool
   -- OpXor ∷ GetNum a => BinOp a a a
   OpXor ∷ GetTy a => BinOp a a a
 
-  OpPair  ∷ (GetTy p1, GetTy p2) => BinOp p1 p2 (p1, p2)
-  OpArr   ∷ Id → BinOp Int a [a]
-  OpArrIx ∷ GetTy a => BinOp [a] Int a
+  OpPair  ∷ (GetSca p1, GetSca p2) => BinOp (Sca p1) (Sca p2) (Pair p1 p2)
+  OpArr   ∷ GetSca a => Id -> BinOp TInt32 (Sca a) (Arr a)
+  OpArrIx ∷ GetSca a => BinOp (Arr a) TInt32 (Sca a)
 
 instance Show (Binary a b c) where
   show (Bin op _function) = show op
 
 instance Show (BinOp a b c) where
   show = \case
-    OpAdd             → "+" ++ subscript (getNum @a)
-    OpSub             → "-" ++ subscript (getNum @a)
-    OpMul             → "*" ++ subscript (getNum @a)
+    OpAdd             → "+" ++ subscript' @a
+    OpSub             → "-" ++ subscript' @a
+    OpMul             → "*" ++ subscript' @a
+    OpDiv             → "/" ++ subscript' @a
     OpEqual{}         → "="
     OpNotEqual{}      → "≠"
     OpLessThan{}      → "<"
@@ -139,7 +139,7 @@ instance Show (BinOp a b c) where
     OpGreaterThanEq{} → "≥"
     OpAnd             → "∧"
     OpOr              → "∨"
-    OpXor             → "⊕" -- ++ subscript (getNum @a)
+    OpXor             → "⊕" ++ subscript' @a
     OpPair            → "×"
     OpArr name        → "array_" ++ show name
     OpArrIx           → "‼"
@@ -150,12 +150,12 @@ instance Show (BinOp a b c) where
 data Ternary a b c d where
   Ter ∷ (GetTy a, GetTy b, GetTy c, GetTy d)
       ⇒ TernOp a b c d 
-      → (a → b → c → d) 
+      → (ToType a → ToType b → ToType c → ToType d) 
       → Ternary a b c d
 
 data TernOp a b c d where
-  OpIf    ∷ TernOp Bool a a a
-  OpWhile ∷ Id → TernOp Bool s s s
+  OpIf    ∷ TernOp TBool a a a
+  OpWhile ∷ Id → TernOp TBool s s s
 
 instance Show (Ternary a b c d) where
   show (Ter op _function) = show op

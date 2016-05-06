@@ -45,9 +45,9 @@ evalWriter = fst . runWriter
 pattern Stdout a ← (ExitSuccess, a, _)
 pattern Stderr b ← (ExitFailure _, _, b)
 
-pattern Int ∷ Int → String
-pattern Int n ← (readMaybe → Just (n ∷ Int)) where
-        Int n = show n
+pattern ReadInt ∷ Int → String
+pattern ReadInt n ← (readMaybe → Just (n ∷ Int)) where
+        ReadInt n = show n
 
 type TypeClass = Type -> Constraint
 
