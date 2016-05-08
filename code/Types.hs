@@ -1,13 +1,28 @@
-{-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE KindSignatures, TypeApplications, DataKinds, StandaloneDeriving #-}
+{-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE ExplicitNamespaces #-}
+{-# LANGUAGE UnicodeSyntax, RankNTypes, LambdaCase #-}
+{-# LANGUAGE UndecidableInstances, AllowAmbiguousTypes #-}
 
+{-# LANGUAGE FlexibleInstances, TypeFamilyDependencies, ConstraintKinds, BangPatterns, DataKinds, DeriveDataTypeable, DeriveFoldable, DeriveFunctor, DeriveGeneric, DeriveTraversable #-}
+{-# LANGUAGE DefaultSignatures, DisambiguateRecordFields, EmptyCase, FunctionalDependencies, GADTs, GeneralizedNewtypeDeriving, InstanceSigs, ImplicitParams #-}
+{-# LANGUAGE ImpredicativeTypes, LambdaCase, LiberalTypeSynonyms, MagicHash, MultiParamTypeClasses, MultiWayIf, MonadComprehensions, NamedFieldPuns #-}
+{-# LANGUAGE NamedWildCards, NumDecimals, NoMonomorphismRestriction, ParallelListComp, PartialTypeSignatures, PatternSynonyms, PolyKinds, PostfixOperators #-}
+{-# LANGUAGE RankNTypes, RecordWildCards, RecursiveDo, RoleAnnotations, ScopedTypeVariables, StandaloneDeriving, TemplateHaskell, TupleSections #-}
+{-# LANGUAGE TypeFamilies, TypeOperators, UnboxedTuples, UnicodeSyntax, ViewPatterns, QuasiQuotes, TypeInType, ApplicativeDo #-}
+
+-- * Imports
 module Types where
 
 import Data.Int
 import Data.Kind (type Type, Constraint)
 import GHC.TypeLits
-import Util
 
--- import Data.Constraint hiding (Class)
+import Unsafe.Coerce
+import Data.Proxy
+import GHC.Exts
+import Data.Constraint hiding (Class)
 
 -- Type-indexed type representations.
 -- 
@@ -16,33 +31,26 @@ import Util
 -- and
 --   "A reflection on types"
 
-type TInt8   = Sca (Number I8)
-type TInt    = Sca (Number I32)
-type TInt32  = Sca (Number I32)
-type TFloat  = Sca (Number (Fra F32))
-type TDouble = Sca (Number (Fra F64))
-type TBool   = Sca (NotNum I1)
+class IzNumber n where
+  proof :: Dict (Num (ToType n))
 
-data TFra = F32         | F64
-data TNum = I8          | I32      | Fra TFra
-data TNot = I1
+instance n `NumberHas` num => IzNumber n where
+  proof :: Dict (Num (NumToType num))
+  proof = Dict
+
+-- * Universe
+data TTyp = Sca    TSca | Arr TSca | Pair TSca TSca
 data TSca = Number TNum | NotNum TNot
-data TTyp = Sca TSca    | Arr TSca | Pair TSca TSca
 
-deriving instance Show (Fr a)
-deriving instance Show (Nu a)
-deriving instance Show (No a)
-deriving instance Show (Sc a)
-deriving instance Show (Ty a)
+data TNum = I8 | I32 | Fra TFra
+data TNot = I1
 
-data Fr :: TFra -> Type where
-  F32Rep :: Fr F32
-  F64Rep :: Fr F64
-
-data Nu :: TNum -> Type where
-  I32Rep :: Nu I32
-  I8Rep  :: Nu I8
-  FraRep :: Fr a -> Nu (Fra a)
+data TFra = F32 | F64
+-- * Hierarchical type-indexed representation 
+data Ty :: TTyp -> Type where
+  ScaRep  :: Sc a -> Ty (Sca a)
+  ArrRep  :: Sc a -> Ty (Arr a)
+  PairRep :: Sc a -> Sc b -> Ty (Pair a b)
 
 data No :: TNot -> Type where
   BoolRep :: No I1
@@ -51,13 +59,33 @@ data Sc :: TSca -> Type where
   NumRep :: Nu a -> Sc (Number a)
   NotRep :: No a -> Sc (NotNum    a)
 
-data Ty :: TTyp -> Type where
-  ScaRep  :: Sc a -> Ty (Sca a)
-  ArrRep  :: Sc a -> Ty (Arr a)
-  PairRep :: Sc a -> Sc b -> Ty (Pair a b)
+data Nu :: TNum -> Type where
+  I32Rep :: Nu I32
+  I8Rep  :: Nu I8
+  FraRep :: Fr a -> Nu (Fra a)
 
--- Hack, I don't know how GHC would do this since injectivity is not compositional
+data Fr :: TFra -> Type where
+  F32Rep :: Fr F32
+  F64Rep :: Fr F64
+
+type TInt8   = Sca (Number I8)
+type TInt    = Sca (Number I32)
+type TInt32  = Sca (Number I32)
+type TFloat  = Sca (Number (Fra F32))
+type TDouble = Sca (Number (Fra F64))
+type TBool   = Sca (NotNum I1)
+
+deriving instance Show (Fr a)
+deriving instance Show (Nu a)
+deriving instance Show (No a)
+deriving instance Show (Sc a)
+deriving instance Show (Ty a)
+
+-- * Injective mapping from universe to corresponding Haskell types
 data TYPE__ = SCA__ | ARR__ | PAIR__
+-- Hack.
+-- I don't know how GHC could make this nicer since injectivity is
+-- not compositional
 type family
   TTYPE__ (a :: TTyp) :: TYPE__ where
   TTYPE__ (Sca _) = SCA__
@@ -80,6 +108,7 @@ type NumToType (num::TNum) = ToType_ SCA__         (Sca (Number       num))
 type FraToType (fra::TFra) = ToType_ SCA__         (Sca (Number (Fra fra)))
 type NotToType (not::TNot) = ToType_ SCA__         (Sca (NotNum       not))
 
+-- * Implicit type representations (Typeable)
 class (Show (ToType ty), 
        Eq   (ToType ty),
        Ord  (ToType ty)) => GetTy ty where 
@@ -143,6 +172,20 @@ mkSca = mkTy
 mkNum = mkTy
 mkFra = mkTy
 
+-- * A way to "cheat"?
+--   foo :: n `NumberHas` num => ...
+-- Means that 'n' has the form 'Sca (Number num)'
+
+-- For use in type instance constraints, so that we can say:
+--  “Hey only allow numbers.”
+-- instance GetNum num => Num (Exp (Scalar num)) where
+type a `ArrHas`        sca = (GetSca sca, a ~ Arr sca)
+type a `ScaHas`        sca = (GetSca sca, a ~ Sca sca)
+type a `NotHas`        not = (GetNot not, a ~ Sca (NotNum not))
+type a `NumberHas`     num = (GetNum num, a ~ Sca (Number num))
+type a `FractionalHas` fra = (GetFra fra, a ~ Sca (Number (Fra fra)))
+
+-- * Functions
 subscript' :: ∀a. GetTy a => String
 subscript' = subscript (getTy @a)
 
@@ -151,7 +194,8 @@ subscript = \case
   ScaRep (NumRep I8Rep)           -> "₈"
   ScaRep (NumRep I32Rep)          -> "₃₂"
   ScaRep (NumRep (FraRep F32Rep)) -> "f"
-  ScaRep (NotRep BoolRep)         -> "d"
+  ScaRep (NumRep (FraRep F64Rep)) -> "d"
+  ScaRep (NotRep BoolRep)         -> "b"
   ArrRep a -> "₍" ++ subscript (ScaRep a) ++ "₎"
   PairRep a b -> 
     "₍" ++ subscript (ScaRep a)  ++ "," ++ subscript (ScaRep b) ++ "₎"
@@ -160,16 +204,17 @@ toLLVMType :: Ty a -> String
 toLLVMType = \case
   ScaRep (NumRep I8Rep) -> "i8"
   ScaRep (NumRep I32Rep)-> "i32"
-
-  -- SI    -> "i32"
-  -- B    -> "i1"
-  -- A I8 -> "%Arr8*"
-  -- A I  -> "%Arr*"
-  -- A B  -> "%Arr1*"
+  ScaRep (NotRep BoolRep)-> "i1"
+  ArrRep (NumRep I8Rep) -> "%Arr8*"
+  ArrRep (NumRep I32Rep) -> "%Arr*"
+  ArrRep (NotRep BoolRep) -> "%Arr1*"
   -- A (A I8) -> "%Arr8**"
   -- A (A I)  -> "%Arr**"
   -- A (A B)  -> "%Arr1**"
-  -- a    -> error ("missing what ever in toLLVM for " ++ show a)
+  a    -> error ("missing what ever in toLLVM for " ++ show a)
+
+bufferType :: ∀sca. GetSca sca => String
+bufferType = toLLVMType (ScaRep (getSca @sca)) ++ "*"
 
 -- data Ty :: Type -> Type where
 --   I8  :: Ty Int8
@@ -349,13 +394,6 @@ toLLVMType = \case
 -- -- pattern CheckNum :: GetNum ty num => Num ty => Ty ty
 -- -- pattern CheckNum <- _     where
 -- --         CheckNum = getNum
-
-pattern CheckNum :: GetNum n => Ty (Sca (Number n))
-pattern CheckNum <- _ where
-        CheckNum = getTy
-
-bufferType :: ∀sca. GetSca sca => String
-bufferType = toLLVMType (ScaRep (getSca @sca)) ++ "*"
 
 -- -- -- -- | Numbers
 -- -- -- data RepNumber = RepInt8 | RepInt32
@@ -585,15 +623,7 @@ bufferType = toLLVMType (ScaRep (getSca @sca)) ++ "*"
 -- -- -- numProof' :: GetNum ty _rep => Ty ty -> Dict (Num ty)
 -- -- -- numProof' = fromJust . numProof
 
--- -- Constraint 
--- data Dict c where 
---   Dict :: c => Dict c
-
--- newtype a |- b = Sub (a => Dict b)
-
--- instance Show (Dict c) where
---   show Dict = "Dict"
-
--- instance Show (a |- b) where
---   show (Sub _) = "Sub Dict"
+-- pattern CheckNum :: GetNum n => Ty (Sca (Number n))
+-- pattern CheckNum <- _ where
+--         CheckNum = getTy
 

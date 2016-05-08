@@ -1,5 +1,10 @@
-{-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE RebindableSyntax, PatternSynonyms, UnicodeSyntax, LambdaCase, ViewPatterns, ScopedTypeVariables, RecordWildCards, OverloadedStrings #-}
+{-# LANGUAGE FlexibleContexts, RankNTypes #-}
+{-# LANGUAGE KindSignatures, TypeApplications, DataKinds, StandaloneDeriving #-}
+{-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE ExplicitNamespaces #-}
+{-# LANGUAGE UnicodeSyntax, RankNTypes, LambdaCase #-}
+{-# LANGUAGE UndecidableInstances, AllowAmbiguousTypes, RecursiveDo, ScopedTypeVariables, ViewPatterns #-}
+{-# Language OverloadedStrings, GADTs #-}
 
 -- http://chrisdone.com/posts/making-ghci-fast 
 -- ghci> :set -fobject-code 
@@ -76,7 +81,6 @@ import Operators
 -- works with operands `Op' that are either references (`Name') or
 -- constants (`ConstTru', `ConstFls', `ConstNum Int').
 compile ∷ ∀a. Exp a → Codegen Op
-compile (ArrIx arr index) = undefined 
 compile (ArrIx (arr :: Exp (Arr elt)) index) = do
   let 
       elementType :: Ty a
@@ -87,8 +91,7 @@ compile (ArrIx (arr :: Exp (Arr elt)) index) = do
 
   buffer   ← getBuffer @elt array_val
 
-  elt_ptr ← namedInstr "ptr" 
-    ("getelementptr "%string%" "%sh%", i32 "%op) (bufferType @elt) buffer index_val
+  elt_ptr ← namedInstr "ptr" ("getelementptr "%string%" "%sh%", i32 "%op) (bufferType @elt) buffer index_val
   -- namedOp "length" ("load i32* "%sh) elt_ptr
   namedOp "val" ("load "%string%" "%sh) (bufferType @elt) elt_ptr
 
@@ -263,12 +266,12 @@ foobarDef expression args = do
 
       argList :: [String]
       argList
-        -- | returnType == "%Arr1*" 
-        -- = map (ex toLLVMVar) ( Ex (Id "out" 0 ::: A (A B)) : args )
-        -- | returnType == "%Arr*" 
-        -- = map (ex toLLVMVar) ( Ex (Id "out" 0 ::: A (A I)) : args )
-        -- | returnType == "%Arr8*" 
-        -- = map (ex toLLVMVar) ( Ex (Id "out" 0 ::: A (A I8)) : args )
+        | returnType == "%Arr1*" 
+        = "%Arr1** %out_0" : map (ex toLLVMVar) args
+        | returnType == "%Arr*"
+        = "%Arr** %out_0" : map (ex toLLVMVar) args
+        | returnType == "%Arr8*"
+        = "%Arr8** %out_0" : map (ex toLLVMVar) args
         | otherwise 
         = map (ex toLLVMVar) args
 
@@ -309,7 +312,7 @@ initialiseVar (Ex (varName ::: varTy)) =
   ScaRep (NumRep I32Rep) -> 
     indented (shown%" = add i32 0, " %shown) varName (32::Int)
 
-  ScaRep (NumRep I32Rep) -> do
+  ArrRep (NumRep I32Rep) -> do
     indented (shown%"_mem  = call i8* @malloc(i32 80000)") varName
     indented (shown%"  = bitcast i8* "%shown%"_mem to %Arr*") varName varName
     indented (shown%"_mem2 = call i8* @malloc(i32 80000)") varName
@@ -347,7 +350,81 @@ initialiseVar (Ex (varName ::: varTy)) =
 
       sh → error ("ERROR: initialiseVar: " ++ show sh)
 
-  ScaRep (NotRep BoolRep) → error "ERROR: [Bool] in arg"
+  ArrRep (NumRep I8Rep) -> do
+    indented (shown%"_mem  = call i8* @malloc(i32 80000)") varName
+    indented (shown%"  = bitcast i8* "%shown%"_mem to %Arr8*") varName varName
+    indented (shown%"_mem2 = call i8* @malloc(i32 80000)") varName
+    indented (shown%"b  = bitcast i8* "%shown%"_mem2 to i8*") varName varName
+    indented (shown%"_buf_ptr  = getelementptr %Arr8* "%shown%", i32 0, i32 0") varName varName
+      
+    indented (shown%"_len_ptr  = getelementptr %Arr8* "%shown%", i32 0, i32 1") varName varName
+    indented ("store i8* "%shown%"b, i8** "%shown%"_buf_ptr") varName varName
+    indented ("store i32 4, i32* "%shown%"_len_ptr") varName 
+      
+    indented ""
+
+    case varName of
+      Id "arg" 1 -> do
+        -- First argument: [1,2,3,4]
+        indented (shown%"_ptr_a = getelementptr i8* "%shown%"b, i32 0") varName varName
+        indented ("store i8 1, i8* " %shown%"_ptr_a") varName 
+        indented (shown%"_ptr_b = getelementptr i8* "%shown%"b, i32 1") varName varName
+        indented ("store i8 2, i8* " %shown%"_ptr_b") varName 
+        indented (shown%"_ptr_c = getelementptr i8* "%shown%"b, i32 2") varName varName
+        indented ("store i8 3, i8* " %shown%"_ptr_c") varName 
+        indented (shown%"_ptr_d = getelementptr i8* "%shown%"b, i32 3") varName varName
+        indented ("store i8 4, i8* " %shown%"_ptr_d") varName 
+        indented ""
+      Id "arg" 0 -> do
+        -- Second argument: [10,20,30,40]
+        indented (shown%"_ptr_a = getelementptr i8* "%shown%"b, i32 0") varName varName
+        indented ("store i8 10, i8* " %shown%"_ptr_a") varName 
+        indented (shown%"_ptr_b = getelementptr i8* "%shown%"b, i32 1") varName varName
+        indented ("store i8 20, i8* " %shown%"_ptr_b") varName 
+        indented (shown%"_ptr_c = getelementptr i8* "%shown%"b, i32 2") varName varName
+        indented ("store i8 30, i8* " %shown%"_ptr_c") varName 
+        indented (shown%"_ptr_d = getelementptr i8* "%shown%"b, i32 3") varName varName
+        indented ("store i8 40, i8* " %shown%"_ptr_d") varName 
+
+      sh → error ("ERROR: initialiseVar: " ++ show sh)
+
+  ArrRep (NotRep BoolRep) → do
+    indented (shown%"_mem  = call i8* @malloc(i32 80000)") varName
+    indented (shown%"  = bitcast i8* "%shown%"_mem to %Arr1*") varName varName
+    indented (shown%"_mem2 = call i8* @malloc(i32 80000)") varName
+    indented (shown%"b  = bitcast i8* "%shown%"_mem2 to i1*") varName varName
+    indented (shown%"_buf_ptr  = getelementptr %Arr1* "%shown%", i32 0, i32 0") varName varName
+      
+    indented (shown%"_len_ptr  = getelementptr %Arr1* "%shown%", i32 0, i32 1") varName varName
+    indented ("store i1* "%shown%"b, i1** "%shown%"_buf_ptr") varName varName
+    indented ("store i32 4, i32* "%shown%"_len_ptr") varName 
+      
+    indented ""
+
+    case varName of
+      Id "arg" 1 -> do
+        -- First argument: [1,2,3,4]
+        indented (shown%"_ptr_a = getelementptr i1* "%shown%"b, i32 0") varName varName
+        indented ("store i1 1, i1* " %shown%"_ptr_a") varName 
+        indented (shown%"_ptr_b = getelementptr i1* "%shown%"b, i32 1") varName varName
+        indented ("store i1 2, i1* " %shown%"_ptr_b") varName 
+        indented (shown%"_ptr_c = getelementptr i1* "%shown%"b, i32 2") varName varName
+        indented ("store i1 3, i1* " %shown%"_ptr_c") varName 
+        indented (shown%"_ptr_d = getelementptr i1* "%shown%"b, i32 3") varName varName
+        indented ("store i1 4, i1* " %shown%"_ptr_d") varName 
+        indented ""
+      Id "arg" 0 -> do
+        -- Second argument: [10,20,30,40]
+        indented (shown%"_ptr_a = getelementptr i1* "%shown%"b, i32 0") varName varName
+        indented ("store i1 10, i1* " %shown%"_ptr_a") varName 
+        indented (shown%"_ptr_b = getelementptr i1* "%shown%"b, i32 1") varName varName
+        indented ("store i1 20, i1* " %shown%"_ptr_b") varName 
+        indented (shown%"_ptr_c = getelementptr i1* "%shown%"b, i32 2") varName varName
+        indented ("store i1 30, i1* " %shown%"_ptr_c") varName 
+        indented (shown%"_ptr_d = getelementptr i1* "%shown%"b, i32 3") varName varName
+        indented ("store i1 40, i1* " %shown%"_ptr_d") varName 
+
+      sh → error ("ERROR: initialiseVar: " ++ show sh)
   
   varType -> 
     error ("ERROR2: initialiseVar: " ++ show varName ++ " " ++ show varType)
@@ -362,12 +439,12 @@ mainDef expression args = do
 
       argList :: [String]
       argList 
-        -- | returnType == "%Arr1*" 
-        -- = map (ex toLLVMVar) ( Ex (Id "arr1mem" 0 ::: A (A B)) : args )
-        -- | returnType == "%Arr*" 
-        -- = map (ex toLLVMVar) ( Ex (Id "arrmem" 0 ::: A (A I)) : args )
-        -- | returnType == "%Arr8*" 
-        -- = map (ex toLLVMVar) ( Ex (Id "arr8mem" 0 ::: A (A I8)) : args )
+        | returnType == "%Arr1*" 
+        = "%Arr1** %out_0" : map (ex toLLVMVar) args
+        | returnType == "%Arr*"
+        = "%Arr** %out_0" : map (ex toLLVMVar) args
+        | returnType == "%Arr8*"
+        = "%Arr8** %out_0" : map (ex toLLVMVar) args
         | otherwise 
         = map (ex toLLVMVar) args
 
@@ -376,25 +453,25 @@ mainDef expression args = do
   initialiseVars args
 
   case expression of
-    Ex (getType' → ScaRep (NotRep BoolRep))  → do
-      indented "%arr1mem_0 = alloca %Arr1*"
-    Ex (getType' → ScaRep (NumRep I32Rep))  → do
-      indented "%arrmem_0 = alloca %Arr*"
-    Ex (getType' → ScaRep (NumRep I8Rep)) → do
-      indented "%arr8mem_0 = alloca %Arr8*"
+    Ex (getType' → ArrRep (NotRep BoolRep))  → do
+      indented "%out_0 = alloca %Arr1*"
+    Ex (getType' → ArrRep (NumRep I32Rep))  → do
+      indented "%out_0 = alloca %Arr*"
+    Ex (getType' → ArrRep (NumRep I8Rep)) → do
+      indented "%out_0 = alloca %Arr8*"
     _                    → pure ()
 
   indented ("%1 = call "%s%" @foobar("%comma%")") returnType argList
 
   case expression of
-    Ex (getType' → ScaRep (NotRep BoolRep))  → do
-      indented "%arr1 = load %Arr1** %arr1mem_0"
+    Ex (getType' → ArrRep (NotRep BoolRep))  → do
+      indented "%arr1 = load %Arr1** %out_0"
       indented "call void @printArr1(%Arr1* %arr1)"
-    Ex (getType' → ScaRep (NumRep I32Rep))  → do
-      indented "%arr = load %Arr** %arrmem_0"
+    Ex (getType' → ArrRep (NumRep I32Rep))  → do
+      indented "%arr = load %Arr** %out_0"
       indented "call void @printArr(%Arr* %arr)"
-    Ex (getType' → ScaRep (NumRep I8Rep)) → do
-      indented "%arr8 = load %Arr8** %arr8mem_0"
+    Ex (getType' → ArrRep (NumRep I8Rep)) → do
+      indented "%arr8 = load %Arr8** %out_0"
       indented "call void @printArr8(%Arr8* %arr8)"
     _                    → pure ()
 
@@ -405,7 +482,7 @@ mainDef expression args = do
 
 -- -- Run
 run :: GetArgs a => a -> IO ()
-run = getOutput >=> putStrLn
+run = getOutput >=> putStr
 
 run8 ∷ Exp TInt8 → IO ()
 run8 = run
@@ -413,9 +490,9 @@ run8 = run
 run32 ∷ Exp TInt → IO ()
 run32 = run
 
-runRead :: (GetArgs a, Read b) => a -> IO b
+runRead :: (Read b, GetArgs a) => a -> IO b
 runRead exp = getOutput exp
-  <&> read.last.lines
+  <&> read.head.lines
 
 code :: GetArgs a => a -> IO ()
 code exp = getArgs exp
@@ -469,11 +546,13 @@ getOutput exp_fn = do
     Stdout output → output
     foo           → show foo
 
--- -- map2 :: (GetTy a, GetTy b, GetTy c) => (Exp a -> Exp b -> Exp c) -> (Exp [a] -> Exp [b] -> Exp [c])
--- -- map2 (¤) xs ys = arr (Len xs `min'` Len ys) (\i -> (xs!i) ¤ (ys!i))
+map2 :: (GetSca a, GetSca b, GetSca c) 
+     => (Exp (Sca a) -> Exp (Sca b) -> Exp (Sca c)) 
+     -> (Exp (Arr a) -> Exp (Arr b) -> Exp (Arr c))
+map2 (¤) xs ys = arr (Len xs `min'` Len ys) (\i -> (xs!i) ¤ (ys!i))
 
--- -- otp :: Exp [Int] -> Exp [Int] -> Exp [Int]
--- -- otp = map2 Xor
+otp :: (GetSca sca, B.Bits (ScaToType sca)) => Exp (Arr sca) -> Exp (Arr sca) -> Exp (Arr sca)
+otp = map2 Xor
 
 -- -- otp' :: (GetTy c, B.Bits c) => Exp [c] -> Exp [c] -> Exp [c]
 -- -- otp' = map2 Xor

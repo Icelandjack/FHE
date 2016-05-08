@@ -1,3 +1,17 @@
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE KindSignatures, TypeApplications, DataKinds, StandaloneDeriving #-}
+{-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE ExplicitNamespaces #-}
+{-# LANGUAGE UnicodeSyntax, RankNTypes, LambdaCase #-}
+{-# LANGUAGE UndecidableInstances, AllowAmbiguousTypes #-}
+
+{-# LANGUAGE FlexibleInstances, TypeFamilyDependencies, ConstraintKinds, BangPatterns, DataKinds, DeriveDataTypeable, DeriveFoldable, DeriveFunctor, DeriveGeneric, DeriveTraversable #-}
+{-# LANGUAGE DefaultSignatures, DisambiguateRecordFields, EmptyCase, FunctionalDependencies, GADTs, GeneralizedNewtypeDeriving, InstanceSigs, ImplicitParams #-}
+{-# LANGUAGE ImpredicativeTypes, LambdaCase, LiberalTypeSynonyms, MagicHash, MultiParamTypeClasses, MultiWayIf, MonadComprehensions, NamedFieldPuns #-}
+{-# LANGUAGE NamedWildCards, NumDecimals, NoMonomorphismRestriction, ParallelListComp, PartialTypeSignatures, PatternSynonyms, PolyKinds, PostfixOperators #-}
+{-# LANGUAGE RankNTypes, RecordWildCards, RecursiveDo, RoleAnnotations, ScopedTypeVariables, StandaloneDeriving, TemplateHaskell, TupleSections #-}
+{-# LANGUAGE TypeFamilies, TypeOperators, UnboxedTuples, UnicodeSyntax, ViewPatterns, QuasiQuotes, TypeInType, ApplicativeDo #-}
+
 module Variable where
 
 import Numeric.Natural

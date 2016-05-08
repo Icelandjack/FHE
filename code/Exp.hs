@@ -1,5 +1,18 @@
-{-# LANGUAGE UndecidableInstances, UndecidableSuperClasses #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE KindSignatures, TypeApplications, DataKinds, StandaloneDeriving #-}
+{-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE ExplicitNamespaces #-}
+{-# LANGUAGE UnicodeSyntax, RankNTypes, LambdaCase #-}
+{-# LANGUAGE UndecidableInstances, AllowAmbiguousTypes #-}
 
+{-# LANGUAGE FlexibleInstances, TypeFamilyDependencies, ConstraintKinds, BangPatterns, DataKinds, DeriveDataTypeable, DeriveFoldable, DeriveFunctor, DeriveGeneric, DeriveTraversable #-}
+{-# LANGUAGE DefaultSignatures, DisambiguateRecordFields, EmptyCase, FunctionalDependencies, GADTs, GeneralizedNewtypeDeriving, InstanceSigs, ImplicitParams #-}
+{-# LANGUAGE ImpredicativeTypes, LambdaCase, LiberalTypeSynonyms, MagicHash, MultiParamTypeClasses, MultiWayIf, MonadComprehensions, NamedFieldPuns #-}
+{-# LANGUAGE NamedWildCards, NumDecimals, NoMonomorphismRestriction, ParallelListComp, PartialTypeSignatures, PatternSynonyms, PolyKinds, PostfixOperators #-}
+{-# LANGUAGE RankNTypes, RecordWildCards, RecursiveDo, RoleAnnotations, ScopedTypeVariables, StandaloneDeriving, TemplateHaskell, TupleSections #-}
+{-# LANGUAGE TypeFamilies, TypeOperators, UnboxedTuples, UnicodeSyntax, ViewPatterns, QuasiQuotes, TypeInType, ApplicativeDo #-}
+
+-- * Imports
 -- https://hackage.haskell.org/package/feldspar-language-0.7/docs/src/Feldspar-Core-Types.html
 
 module Exp where
@@ -24,7 +37,7 @@ import Data.Kind
 import Data.Type.Equality
 import Data.Constraint
 
--- | AST
+-- * AST
 data Exp a where
   Constant :: GetSca a => Ty (Sca a) → ScaToType a → Exp (Sca a)
   MkVar    :: V a -> Exp a
@@ -39,9 +52,19 @@ data Exp a where
   -- Lam ∷ Name → Exp b → Exp (a → b)
   -- App ∷ Exp (a → b) → Exp a → Exp b
 
-------------------------------------------------------------------------
--- Pattern Synonym Sugar
-------------------------------------------------------------------------
+-- * Pattern Synonyms
+-- ** Helper functions for operators 
+unaryOp ∷ (GetTy a, GetTy b) 
+        ⇒ UnOp a b 
+        → (ToType a → ToType b) 
+        → (Exp a → Exp b)
+unaryOp op (¬) = UnOp (Un op (¬))
+                              
+binaryOp ∷ (GetTy a, GetTy b, GetTy c) 
+         ⇒ BinOp a b c 
+         → (ToType a → ToType b → ToType c) 
+         → (Exp a → Exp b → Exp c)
+binaryOp op (•) = BinOp (Bin op (•))
 
 -- Construct AND deconstruct a numeric value, introducing a local
 -- 'Num' assumption, this took a lot of effort and design but now I
@@ -63,25 +86,15 @@ data Exp a where
 -- fails on 'Fls' or what ever.
 -- 
 -- Interesting question, answer when sober.
-pattern ANum :: GetNum n => Num (NumToType n) => NumToType n -> Exp (Sca (Number n))
-pattern ANum n = Constant CheckNum n
+-- pattern ANum :: (GetNum num, a ~ Sca (Number num)) => Num (NumToType num) => NumToType num -> Exp a
+-- pattern ANum :: a`NumberHas`num => Num (NumToType num) => NumToType num -> Exp a
+pattern ANum :: () => t `ScaHas` a => ScaToType a -> Exp t
+pattern ANum n ← Constant _     n
+  where ANum n = Constant getTy n
 
 -- pattern Var :: GetTy t => () => Id → Exp t
 -- pattern Var id ← MkVar (id ::: _    ) 
 --   where Var id = MkVar (id ::: getTy)
-
--- -- Shorthands for operators
-unaryOp ∷ (GetTy a, GetTy b) 
-        ⇒ UnOp a b 
-        → (ToType a → ToType b) 
-        → (Exp a → Exp b)
-unaryOp op (¬) = UnOp (Un op (¬))
-                              
-binaryOp ∷ (GetTy a, GetTy b, GetTy c) 
-         ⇒ BinOp a b c 
-         → (ToType a → ToType b → ToType c) 
-         → (Exp a → Exp b → Exp c)
-binaryOp op (•) = BinOp (Bin op (•))
 
 pattern MkInt8 :: () => TInt8 ~ a => ToType a -> Exp a
 pattern MkInt8 i₈ = Constant (ScaRep (NumRep I8Rep)) i₈
@@ -150,11 +163,11 @@ pattern MkPair :: () => (GetSca p1, GetSca p2, t ~ Pair p1 p2) => Exp (Sca p1) -
 pattern MkPair a b ← BinOp (Bin OpPair _)   a b 
   where MkPair a b = BinOp (Bin OpPair (,)) a b
 
-pattern Fst :: () => (GetSca a, GetSca b) => Exp (Pair a b) -> Exp (Sca a)
+pattern Fst :: () => (a `ScaHas` sca₁, GetSca sca₂) => Exp (Pair sca₁ sca₂) -> Exp a
 pattern Fst pair ← UnOp (Un OpFst _)   pair 
   where Fst pair = UnOp (Un OpFst fst) pair
 
-pattern Snd :: () => (GetSca a, GetSca b) => Exp (Pair a b) -> Exp (Sca b)
+pattern Fst :: () => (GetSca sca₁, a `ScaHas` sca₂) => Exp (Pair sca₁ sca₂) -> Exp a
 pattern Snd pair ← UnOp (Un OpSnd _  ) pair 
   where Snd pair = UnOp (Un OpSnd snd) pair
 
@@ -163,10 +176,10 @@ pattern While name cond init body ← TerOp (Ter (OpWhile name) _) cond init bod
   where While name                = TerOp (Ter (OpWhile name) (error "while"))
 
 pattern Len :: () => (GetSca a, t ~ TInt32) => Exp (Arr a) -> Exp t
-pattern Len xs <- UnOp (Un OpLen _)             xs 
-  where Len xs =  UnOp (Un OpLen genericLength) xs
+pattern Len xs <- UnOp (Un OpLen{} _)                    xs 
+  where Len xs =  UnOp (Un (OpLen getSca) genericLength) xs
 
-pattern MkArr :: () => (GetSca a, t ~ Arr a) => Exp TInt32 -> Id -> Exp (Sca a) -> Exp t
+pattern MkArr :: () => a `ArrHas` sca => Exp TInt32 -> Id -> Exp (Sca sca) -> Exp a
 pattern MkArr len name body ← BinOp (Bin (OpArr name) _)             len body 
   where MkArr len name body = BinOp (Bin (OpArr name) (error "arr")) len body
 
@@ -191,13 +204,12 @@ pattern MkArr len name body ← BinOp (Bin (OpArr name) _)             len body
 --
 -- This is weird... I want 'a1' to appear LAST, 'a' is what matters
 --   TODO add this to trac please, simplified
-pattern ArrIx ∷ ∀a1. () ⇒ ∀a. (GetSca a, a1 ~ Sca a) ⇒ Exp (Arr a) → Exp TInt32 → Exp a1
+pattern ArrIx ∷ ∀a. () ⇒ ∀sca. a `ScaHas` sca ⇒ Exp (Arr sca) → Exp TInt32 → Exp a
 pattern ArrIx xs index ← BinOp (Bin OpArrIx _)                            xs index 
   where ArrIx xs index = BinOp (Bin OpArrIx (\xs i → xs!!fromIntegral i)) xs index
 
-------------------------------------------------------------------------
--- Instances                                                          --
-------------------------------------------------------------------------
+-- * Instances
+-- ** Show (Exp a)
 instance Show (Exp a) where
   show ∷ Exp a → String
   show = \case
@@ -208,6 +220,7 @@ instance Show (Exp a) where
 
     While n c b i → 
       printf "while [%s = %s] (%s) { %s }" (show n) (show i) (show c) (show b)
+
     MkArr l n ixf → 
       printf "(%s for %s in 0…%s)" (show ixf) (show n) (show l)
 
@@ -217,6 +230,9 @@ instance Show (Exp a) where
     --[TODO] For some reason this no longer works in 8.1, wait I don't
     -- even understand what I was doing since I changed so much stuff, meh
     -- Constant (ScalarType ty @ IsShow) exp → 
+    -- 
+    -- > Wait, are you Sure?? You used type application in a pattern? No this must be an as-pattern.
+    -- > Hurm, okay.
     Constant ty exp → 
       show exp ++ subscript ty
 
@@ -229,19 +245,18 @@ instance Show (Exp a) where
     TerOp op x y z →
       printf "(%s %s %s %s)" (show op) (show x) (show y) (show z)
 
-    ArrIx arr i      → printf "%s[%s]" (show arr) (show i)
+    ArrIx arr i → 
+      printf "%s[%s]" (show arr) (show i)
 
     MkVar var → show var
 
     -- App a b          → printf "%s · %s" (show a) (show b)
     -- Lam n body       → printf "(%s ↦ %s)" (show n) (show body)
 
-    Pi a -> "π" ++ subscript (ScaRep (NumRep (FraRep a)))
-    _ -> error "instance Show (Exp a)"
+    Pi a -> "π_" ++ subscript (ScaRep (NumRep (FraRep a)))
+    -- _ -> error "instance Show (Exp a)"
 
-type a `NumberHas`     num = (GetNum num, a ~ Sca (Number num))
-type a `FractionalHas` fra = (GetFra fra, a ~ Sca (Number (Fra fra)))
-
+-- ** Num (Exp a)
 instance a `NumberHas` num => Num (Exp a) where
   (+) :: Exp a -> Exp a -> Exp a
   ANum 0 + y      = y
@@ -276,6 +291,7 @@ instance a `NumberHas` num => Num (Exp a) where
 
   signum = error "Num: no 'signum' method for 'Exp num'"
 
+-- ** Fractional/Floating (Exp a)
 instance a `FractionalHas` fra => Fractional (Exp a) where
   (/) :: Exp a -> Exp a -> Exp a
   (/) = binaryOp OpDiv (/)
@@ -284,10 +300,7 @@ instance a `FractionalHas` fra => Floating (Exp a) where
   pi :: Exp a
   pi = Pi getFra
 
-------------------------------------------------------------------------
--- Higher-Order Interface                                             --
-------------------------------------------------------------------------
-
+-- * Higher-Order Interface
 while ∷ GetTy s ⇒ (Exp s → Exp TBool) → (Exp s → Exp s) → Exp s → Exp s
 while cond loop init = While (Lambda n) condBody loopBody init where
   n        = 1 + max (maxLam condBody) (maxLam loopBody)
@@ -314,15 +327,26 @@ maxLam = \case
   TerOp _ a b c         → maxLam a `max` maxLam b `max` maxLam c 
 
   -- App a b            → maxLam a `max` maxLam b
-
   -- Arrays
   ArrIx arr ix          → maxLam arr `max` maxLam ix
 
   _                     → error ("maxLam: ")
 
--- Predefined functions
+-- * Predefined functions
 min' :: GetSca a => Exp (Sca a) -> Exp (Sca a) -> Exp (Sca a)
 min' a b = If (LessThan a b) a b
+
+fromList :: ∀a. GetSca a => [Exp (Sca a)] -> Exp (Arr a)
+fromList [] = arr 0 (\_ -> undefined)
+fromList xs = arr (genericLength xs) (foo 0 xs) where
+
+  foo :: GetNum num => Exp (Sca (Number num)) -> [Exp (Sca a)] -> Exp (Sca (Number num)) -> Exp (Sca a)
+  foo n = \case
+    [x] → const x
+    x:xs → \ix → 
+      If (n `Equal` ix) 
+        x
+        (foo (n+1) xs ix)
 
 getType' ∷ Exp ty → Ty ty
 getType' = \case
@@ -339,14 +363,15 @@ getType' = \case
 showExpType ∷ Exp ty → String
 showExpType = toLLVMType . getType'
 
--- -- getArgs ::                           (Exp ret)                   -> ARGS '[] ret
--- -- getArgs :: (GetTy a)            => (Exp a -> Exp ret)          -> ARGS '[a] ret
--- -- getArgs :: (GetTy a, GetTy b) => (Exp a -> Exp b -> Exp ret) -> ARGS '[a,b] ret
--- -- 
--- -- >>> getArgs ((+) @(Exp I8))
--- -- (%arg_1 : i8), (%arg_0 : i8), (NOARGS (%arg_1 +₈ %arg_0))
--- -- 
--- -- TODO: Reverse indices.
+-- * GetArgs
+-- getArgs ::                           (Exp ret)                   -> ARGS '[] ret
+-- getArgs :: (GetTy a)            => (Exp a -> Exp ret)          -> ARGS '[a] ret
+-- getArgs :: (GetTy a, GetTy b) => (Exp a -> Exp b -> Exp ret) -> ARGS '[a,b] ret
+-- 
+-- >>> getArgs ((+) @(Exp I8))
+-- (%arg_1 : i8), (%arg_0 : i8), (NOARGS (%arg_1 +₈ %arg_0))
+-- 
+-- TODO: Reverse indices.
 class GetArgs a where
   getArgs :: a -> (Ex Exp, [Ex V])
 
@@ -372,69 +397,3 @@ instance (GetTy a, GetArgs rest) => GetArgs (Exp a -> rest) where
     (exp, restArgs) = getArgs rest
 
     in (exp, Ex argument : restArgs)
-
--- -- -- -- -- -- getExpression :: ARGS types retTy -> Exp retTy
--- -- -- -- -- -- getExpression = \case
--- -- -- -- -- --   NOARGS exp     -> exp
--- -- -- -- -- --   ADDARGS _ rest -> getExpression rest
-
--- -- -- -- -- -- ex :: (forall x. f x -> r) -> (Ex f -> r)
--- -- -- -- -- -- ex g (Ex fx) = g fx
-
--- -- -- -- -- -- -- argsNAME :: Traversal' (ARGS types retTy) Id
--- -- -- -- -- -- -- argsNAME f = \case
--- -- -- -- -- -- --   NOARGS exp -> 
--- -- -- -- -- -- --     pure (NOARGS exp)
-
--- -- -- -- -- -- --   ADDARGS (Id varName i ::: varTy) rest ->  -- do
-
--- -- -- -- -- --     -- let u :: Ex V
--- -- -- -- -- --     --     u = Ex (N varName i ::: varTy)
-
--- -- -- -- -- --     -- -- ex :: Ex V <- f u
-
--- -- -- -- -- --     -- return (ADDARGS ) -- ADDARGS <$> (VAR ty <$> f name) <*> argsName f rest
-
--- -- -- -- -- -- getFormattedArgs :: ARGS types retTy -> [String]
--- -- -- -- -- -- getFormattedArgs = \case
--- -- -- -- -- --   NOARGS  exp -> 
--- -- -- -- -- --     []
-
--- -- -- -- -- --   ADDARGS (id ::: ty) rest -> 
--- -- -- -- -- --     (showTy ty ++ " " ++ show id) : getFormattedArgs rest
-
--- -- -- -- -- -- argsId :: Traversal' (ARGS types retTy) Id
--- -- -- -- -- -- argsId f = \case
--- -- -- -- -- --   NOARGS exp -> 
--- -- -- -- -- --     pure (NOARGS exp)
-
--- -- -- -- -- --   ADDARGS (id ::: ty) rest ->
--- -- -- -- -- --     ADDARGS 
--- -- -- -- -- --       <$> (f id <&> \id' -> id' ::: ty)
--- -- -- -- -- --       <*> argsId f rest
-
--- -- -- -- -- -- instance Show (ARGS types retTy) where
--- -- -- -- -- --   show (NOARGS exp) = 
--- -- -- -- -- --     "(NOARGS " -- ++ show exp ++ ")"
-
--- -- -- -- -- --   -- show (ADDARGS name ty rest) = 
--- -- -- -- -- --   --   "(" ++ show name ++ " : " ++ showTy ty ++ ")" ++ ", " ++ show rest
-
--- -- -- -- -- -- allargs :: ARGS '[I8, I8, I8, I8, I8] I8
--- -- -- -- -- -- allargs = 
--- -- -- -- -- --   getArgs ((\a b c d e -> a+b+c+d+e) :: Exp I8 -> Exp I8 -> Exp I8 -> Exp I8 -> Exp I8 -> Exp I8)
-
--- -- -- -- -- -- type EI8  = Exp Int8
-
--- fromList :: GetSca a => [Exp a] -> Exp [a]
--- fromList [] = arr 0 (\_ -> undefined)
--- fromList xs = arr (genericLength xs) (foo 0 xs) where
-
---   foo :: (GetSca a, GetNum b) => Exp b -> [Exp a] -> Exp b -> Exp a
---   foo n = \case
---     [x] → const x
---     x:xs → \ix → 
---       If (n `Equal` ix) 
---         x
---         (foo (n+1) xs ix)
-

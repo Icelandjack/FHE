@@ -1,3 +1,17 @@
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE KindSignatures, TypeApplications, DataKinds, StandaloneDeriving #-}
+{-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE ExplicitNamespaces #-}
+{-# LANGUAGE UnicodeSyntax, RankNTypes, LambdaCase #-}
+{-# LANGUAGE UndecidableInstances, AllowAmbiguousTypes #-}
+
+{-# LANGUAGE FlexibleInstances, TypeFamilyDependencies, ConstraintKinds, BangPatterns, DataKinds, DeriveDataTypeable, DeriveFoldable, DeriveFunctor, DeriveGeneric, DeriveTraversable #-}
+{-# LANGUAGE DefaultSignatures, DisambiguateRecordFields, EmptyCase, FunctionalDependencies, GADTs, GeneralizedNewtypeDeriving, InstanceSigs, ImplicitParams #-}
+{-# LANGUAGE ImpredicativeTypes, LambdaCase, LiberalTypeSynonyms, MagicHash, MultiParamTypeClasses, MultiWayIf, MonadComprehensions, NamedFieldPuns #-}
+{-# LANGUAGE NamedWildCards, NumDecimals, NoMonomorphismRestriction, ParallelListComp, PartialTypeSignatures, PatternSynonyms, PolyKinds, PostfixOperators #-}
+{-# LANGUAGE RankNTypes, RecordWildCards, RecursiveDo, RoleAnnotations, ScopedTypeVariables, StandaloneDeriving, TemplateHaskell, TupleSections #-}
+{-# LANGUAGE TypeFamilies, TypeOperators, UnboxedTuples, UnicodeSyntax, ViewPatterns, QuasiQuotes, TypeInType, ApplicativeDo #-}
+{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE UnicodeSyntax #-}
 {-# LANGUAGE UnicodeSyntax, FlexibleContexts #-}
@@ -459,15 +473,21 @@ compileUnop = \case
   OpSnd →
     π(1)
 
-  OpLen →
-    getLength
+  OpLen sc →
+    getLength sc
 
 π ∷ Int → Op → Codegen Op
 π(n) pair = namedOp "fst" ("extractvalue %pairi32i32 "%op%", "%int) pair n
 
-getLength ∷ Op → Codegen Op
-getLength nm = do
+getLength ∷ Sc a → Op → Codegen Op
+getLength (NumRep I32Rep) nm = do
   len ← namedInstr "len.ptr" ("getelementptr %Arr* "%op%", i32 0, i32 1") nm
+  namedOp "length" ("load i32* "%shown) len
+getLength (NumRep I8Rep) nm = do
+  len ← namedInstr "len.ptr" ("getelementptr %Arr8* "%op%", i32 0, i32 1") nm
+  namedOp "length" ("load i32* "%shown) len
+getLength (NotRep BoolRep) nm = do
+  len ← namedInstr "len.ptr" ("getelementptr %Arr1* "%op%", i32 0, i32 1") nm
   namedOp "length" ("load i32* "%shown) len
 
 -- compile (Len (Arr len _ _)) = do

@@ -1,3 +1,16 @@
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE KindSignatures, TypeApplications, DataKinds, StandaloneDeriving #-}
+{-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE ExplicitNamespaces #-}
+{-# LANGUAGE UnicodeSyntax, RankNTypes, LambdaCase #-}
+{-# LANGUAGE UndecidableInstances, AllowAmbiguousTypes #-}
+
+{-# LANGUAGE FlexibleInstances, TypeFamilyDependencies, ConstraintKinds, BangPatterns, DataKinds, DeriveDataTypeable, DeriveFoldable, DeriveFunctor, DeriveGeneric, DeriveTraversable #-}
+{-# LANGUAGE DefaultSignatures, DisambiguateRecordFields, EmptyCase, FunctionalDependencies, GADTs, GeneralizedNewtypeDeriving, InstanceSigs, ImplicitParams #-}
+{-# LANGUAGE ImpredicativeTypes, LambdaCase, LiberalTypeSynonyms, MagicHash, MultiParamTypeClasses, MultiWayIf, MonadComprehensions, NamedFieldPuns #-}
+{-# LANGUAGE NamedWildCards, NumDecimals, NoMonomorphismRestriction, ParallelListComp, PartialTypeSignatures, PatternSynonyms, PolyKinds, PostfixOperators #-}
+{-# LANGUAGE RankNTypes, RecordWildCards, RecursiveDo, RoleAnnotations, ScopedTypeVariables, StandaloneDeriving, TemplateHaskell, TupleSections #-}
+{-# LANGUAGE TypeFamilies, TypeOperators, UnboxedTuples, UnicodeSyntax, ViewPatterns, QuasiQuotes, TypeInType, ApplicativeDo #-}
 {-# LANGUAGE UndecidableInstances #-} -- TODO Remove later
 
 module Operators where
@@ -75,7 +88,7 @@ data UnOp a b where
   OpFst ∷ (GetSca p1, GetSca p2) => UnOp (Pair p1 p2) (Sca p1)
   OpSnd ∷ (GetSca p1, GetSca p2) => UnOp (Pair p1 p2) (Sca p2)
 
-  OpLen ∷ GetSca a => UnOp (Arr a) TInt32
+  OpLen ∷ GetSca a => Sc a -> UnOp (Arr a) TInt32
 
 instance Show (Unary a b) where
   show (Un op _function) = show op
@@ -86,7 +99,7 @@ instance Show (UnOp a b) where
     OpNeg → "-"
     OpFst → "fst"
     OpSnd → "snd"
-    OpLen → "len"
+    OpLen _ → "len"
 
 ------------------------------------------------------------------------
 -- Binary operators                                                   --
