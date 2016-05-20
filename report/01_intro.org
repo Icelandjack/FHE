@@ -1,3 +1,5 @@
+TODO: ADD HIERARCHICAL TYPEREP TO ABSTRACT
+
 * Introduction
 “Security is only as strong as the weakest link, and the mathematics
 of cryptography is almost never the weakest link.”[fn:mathematics]

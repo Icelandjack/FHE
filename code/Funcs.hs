@@ -4,7 +4,9 @@
 {-# LANGUAGE ExplicitNamespaces #-}
 {-# LANGUAGE UnicodeSyntax, RankNTypes, LambdaCase #-}
 {-# LANGUAGE UndecidableInstances, AllowAmbiguousTypes, RecursiveDo, ScopedTypeVariables, ViewPatterns #-}
-{-# Language OverloadedStrings, GADTs #-}
+{-# Language OverloadedStrings, GADTs, ExtendedDefaultRules #-}
+
+
 
 -- http://chrisdone.com/posts/making-ghci-fast 
 -- ghci> :set -fobject-code 

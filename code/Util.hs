@@ -1,16 +1,19 @@
-{-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE KindSignatures, TypeApplications, DataKinds, StandaloneDeriving #-}
-{-# LANGUAGE TypeOperators #-}
-{-# LANGUAGE ExplicitNamespaces #-}
-{-# LANGUAGE UnicodeSyntax, RankNTypes, LambdaCase #-}
-{-# LANGUAGE UndecidableInstances, AllowAmbiguousTypes #-}
-
-{-# LANGUAGE FlexibleInstances, TypeFamilyDependencies, ConstraintKinds, BangPatterns, DataKinds, DeriveDataTypeable, DeriveFoldable, DeriveFunctor, DeriveGeneric, DeriveTraversable #-}
-{-# LANGUAGE DefaultSignatures, DisambiguateRecordFields, EmptyCase, FunctionalDependencies, GADTs, GeneralizedNewtypeDeriving, InstanceSigs, ImplicitParams #-}
-{-# LANGUAGE ImpredicativeTypes, LambdaCase, LiberalTypeSynonyms, MagicHash, MultiParamTypeClasses, MultiWayIf, MonadComprehensions, NamedFieldPuns #-}
-{-# LANGUAGE NamedWildCards, NumDecimals, NoMonomorphismRestriction, ParallelListComp, PartialTypeSignatures, PatternSynonyms, PolyKinds, PostfixOperators #-}
-{-# LANGUAGE RankNTypes, RecordWildCards, RecursiveDo, RoleAnnotations, ScopedTypeVariables, StandaloneDeriving, TemplateHaskell, TupleSections #-}
-{-# LANGUAGE TypeFamilies, TypeOperators, UnboxedTuples, UnicodeSyntax, ViewPatterns, QuasiQuotes, TypeInType, ApplicativeDo #-}
+{-# LANGUAGE 
+    FlexibleContexts, KindSignatures, TypeApplications, DataKinds, 
+    StandaloneDeriving, TypeOperators, ExplicitNamespaces, UnicodeSyntax, 
+    RankNTypes, LambdaCase, UndecidableInstances, AllowAmbiguousTypes, 
+    FlexibleInstances, TypeFamilyDependencies, ConstraintKinds, 
+    BangPatterns, DataKinds, DeriveDataTypeable, DeriveFoldable, 
+    DeriveFunctor, DeriveGeneric, DeriveTraversable, DefaultSignatures, 
+    DisambiguateRecordFields, EmptyCase, FunctionalDependencies, GADTs, 
+    GeneralizedNewtypeDeriving, InstanceSigs, ImplicitParams, ImpredicativeTypes, 
+    LambdaCase, LiberalTypeSynonyms, MagicHash, MultiParamTypeClasses, MultiWayIf, 
+    MonadComprehensions, NamedFieldPuns, NamedWildCards, NumDecimals, 
+    NoMonomorphismRestriction, ParallelListComp, PartialTypeSignatures, 
+    PatternSynonyms, PolyKinds, PostfixOperators, RankNTypes, RecordWildCards, 
+    RecursiveDo, RoleAnnotations, ScopedTypeVariables, StandaloneDeriving, 
+    TemplateHaskell, TupleSections, TypeFamilies, TypeOperators, UnboxedTuples, 
+    UnicodeSyntax, ViewPatterns, QuasiQuotes, TypeInType, ApplicativeDo #-}
 
 module Util where
 
@@ -23,7 +26,7 @@ import System.Exit
 import Data.Kind
 import GHC.TypeLits
 
-bind2 ∷ (Monad m) ⇒ (a → b → m c) → m a → m b → m c
+bind2 ∷ Monad m ⇒ (a → b → m c) → m a → m b → m c
 bind2 f m1 m2 = do
     x1 ← m1
     x2 ← m2
@@ -83,3 +86,12 @@ infixl 0 ◃, ▹, <|, |>
 
 type x ◃ f = f x
 type f ▹ x = f x
+
+infixr 9 `Compose`
+class    (f (g x)) => (f `Compose` g) x
+instance (f (g x)) => (f `Compose` g) x
+
+infixl 7 `And`
+class    (f x, g x) => (f `And` g) x
+instance (f x, g x) => (f `And` g) x
+
