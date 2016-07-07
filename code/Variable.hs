@@ -111,6 +111,7 @@ data Op
   | ConstNum8 Int8
   | ConstNum  Int
   | Struct [Op]
+  deriving (Eq)
 
 instance Show Op where
   show = \case

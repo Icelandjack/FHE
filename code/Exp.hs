@@ -259,10 +259,10 @@ instance Show (Exp a) where
 -- ** Num (Exp a)
 instance a `NumberHas` num => Num (Exp a) where
   (+) :: Exp a -> Exp a -> Exp a
+  x      + y      = binaryOp OpAdd (-) x y
   ANum 0 + y      = y
   x      + ANum 0 = x
   ANum a + ANum b = ANum (a + b)
-  x      + y      = binaryOp OpSub (-) x y
 
   (-) :: Exp a -> Exp a -> Exp a
   a      - b      = binaryOp OpSub (-) a b

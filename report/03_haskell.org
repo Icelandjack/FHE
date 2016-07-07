@@ -1,5 +1,145 @@
 * Tutorial & Haskell Implementation
 Haskell is a purely functional programming language.
 
-Skrifa um Haskell og fully homomorphic encryption á morgun
+** ASTs
+Datatypes in Haskell are defined using =data=,
 
+: data Bool = False | True
+
+creates a type =Bool= with two constructors:
+
+: False :: Bool
+: True  :: Bool
+
+Can also be written more explicitly
+
+: data Bool where
+:   False :: Bool
+:   True  :: Bool
+
+
+Functions can be defined by pattern matching, matched top-to-bottom,
+left-to-right:
+
+: cond :: Bool -> a -> a -> a
+: cond True  tru _   = tru
+: cond False _   fls = fls
+
+This is how a language with numbers and Booleans is defined
+
+: data Exp where
+:   INT   :: Int -> Exp
+:   TRUE  :: Exp
+:   FALSE :: Exp
+:   ADD   :: Exp -> Exp -> Exp
+:   NOT   :: Exp -> Exp
+:   COND  :: Exp -> Exp -> Exp -> Exp
+
+This allow us to construct terms
+
+: -- not False
+: term1 :: Exp
+: term1 = NOT FALSE
+
+: -- if not False then 4 else 10
+: term2 :: Exp
+: term2 = COND (NOT FALSE) (INT 4) (INT 10)
+
+but it also allows constructing bogus terms like negating a number
+
+: -- not 5
+: bogus1 :: Exp 
+: bogus1 = NOT (INT 5)
+
+or adding two booleans together:
+: -- False + True
+: bogus2 :: Exp
+: bogus2 = ADD FALSE TRUE
+
+There could be a model that allows those, but we decide against that.
+
+*** GADTs
+We want to be able to distinguish between numbers and Booleans so we
+only add numbers and only negate Booleans, for that we index our
+expression type with another type using *generalized* algebraic data
+types (GADTs)
+
+: data Exp a where
+:   INT   :: Int -> Exp Int
+:   TRUE  :: Exp Bool
+:   FALSE :: Exp Bool
+:   ADD   :: Exp Int -> Exp Int -> Exp Int
+:   NOT   :: Exp Bool -> Exp Bool
+:   COND  :: Exp Bool -> Exp a -> Exp a -> Exp a
+
+: term1 :: Exp Bool
+: term1 = NOT FALSE
+
+: term2 :: Exp Int
+: term2 = COND (NOT FALSE) (INT 4) (INT 10)
+
+and the bogus terms don't compile.
+
+Note that the branches of =COND= can be Ints or Booleans
+
+: COND  :: Exp Bool -> Exp Int  -> Exp Int  -> Exp Int
+: COND  :: Exp Bool -> Exp Bool -> Exp Bool -> Exp Bool
+
+but they can't mix Ints and Booleans, so the branches and result type
+must agree.
+
+** =Bound= variables
+We also need to represent things like:
+
+: for i in [0..5]
+:   print i
+:   print (2 * i)
+
+which means we need to consider how to model =for=
+
+: For :: Char -> Exp Int -> ???
+
+we end up modeling it with the =bound= library but =bound= reserves
+the parameter for type of variables, so =bound= doesn't work with
+=GADTs=. 
+
+: data Exp a 
+:   = Var a 
+:   | Int Int 
+:   | Print (Exp a)
+:   | Exp a :>>: Exp a
+:   | For (Exp a) (Scope () Exp a)
+
+where =Scope () Exp a= denotes a scope with one variable bound (this
+is complicated)
+
+*** Code
+: import Bound
+: import Prelude.Extras
+: 
+: data Exp a 
+:   = Var a 
+:  | Mul (Exp a) (Exp a)
+:  | Int Int 
+:  | Print (Exp a)
+:  | Exp a :>>: Exp a
+:  | For (Exp a) (Scope () Exp a)
+:   deriving (Functor, Foldable, Traversable)
+: 
+: deriving instance Show a => Show (Exp a)
+: instance Show1 Exp
+: makeBound ''Exp
+: deriving instance Eq a => Eq (Exp a)
+: instance Eq1 Exp
+: 
+: ex :: Exp a
+: Just ex = closed $ 
+:   For (Int 5) $ abstract1 'i' $ 
+:        Print (Var 'i') 
+:   :>>: Print (Var 'i' `Mul` Int 2)
+
+*** Next
+Now we can compare our expressions for equality, not needing to worry
+about what variable name we picked.
+
+Sadly this doesn't work well with imperative code.

@@ -13,7 +13,7 @@
     PatternSynonyms, PolyKinds, PostfixOperators, RankNTypes, RecordWildCards, 
     RecursiveDo, RoleAnnotations, ScopedTypeVariables, StandaloneDeriving, 
     TemplateHaskell, TupleSections, TypeFamilies, TypeOperators, UnboxedTuples, 
-    UnicodeSyntax, ViewPatterns, QuasiQuotes, TypeInType, ApplicativeDo #-}
+    UnicodeSyntax, ViewPatterns, QuasiQuotes, TypeInType, ApplicativeDo, UndecidableSuperClasses #-}
 
 module Util where
 

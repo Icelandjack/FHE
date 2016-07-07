@@ -82,54 +82,54 @@ import Operators
 -- `compile' has to deal with more than just registers so the return
 -- works with operands `Op' that are either references (`Name') or
 -- constants (`ConstTru', `ConstFls', `ConstNum Int').
-compile ∷ ∀a. Exp a → Codegen Op
+compile :: forall a. Exp a -> Codegen Op
 compile (ArrIx (arr :: Exp (Arr elt)) index) = do
   let 
       elementType :: Ty a
       elementType = getTy @a
 
-  array_val ← compile arr
-  index_val ← {- i32toi64 =<< -} compile index
+  array_val <- compile arr
+  index_val <- {- i32toi64 =<< -} compile index
 
-  buffer   ← getBuffer @elt array_val
+  buffer   <- getBuffer @elt array_val
 
-  elt_ptr ← namedInstr "ptr" ("getelementptr "%string%" "%sh%", i32 "%op) (bufferType @elt) buffer index_val
+  elt_ptr <- namedInstr "ptr" ("getelementptr "%string%" "%sh%", i32 "%op) (bufferType @elt) buffer index_val
   -- namedOp "length" ("load i32* "%sh) elt_ptr
   namedOp "val" ("load "%string%" "%sh) (bufferType @elt) elt_ptr
 
 compile (MkArr len var (ixf :: Exp (Sca elt))) = mdo
-  entry   ← getBlock
-  loop_1  ← newBlock "arr.loop1"
-  loop_2  ← newBlock "arr.loop2"
-  post    ← newBlock "arr.post"
+  entry   <- getBlock
+  loop_1  <- newBlock "arr.loop1"
+  loop_2  <- newBlock "arr.loop2"
+  post    <- newBlock "arr.post"
 
-  arrLength ← compile len
-  after_if  ← getBlock
+  arrLength <- compile len
+  after_if  <- getBlock
 
-  arrMem    ← mallocStr @elt arrLength
-  buffer    ← getBuffer @elt (Reference arrMem)
+  arrMem    <- mallocStr @elt arrLength
+  buffer    <- getBuffer @elt (Reference arrMem)
 
   jmp loop_1
 
   -- | arr.loop
   -- Increment from [0…len) 
   setBlock loop_1
-  i₀  ← φ "i32" (ConstNum8 0,  after_if)
+  i₀  <- φ "i32" (ConstNum8 0,  after_if)
                 (Reference i₁, loop_2')
-  i₁  ← incr i₀
+  i₁  <- incr i₀
 
-  keepGoing ← namedOp "slt"
+  keepGoing <- namedOp "slt"
     ("icmp slt i32 " %sh% ", " %sh) i₀ arrLength
 
   br keepGoing loop_2 post
 
   setBlock loop_2 
 
-  ptr ← namedInstr "ptr" 
+  ptr <- namedInstr "ptr" 
     ("getelementptr "%string%" " %sh% ", i32 " %sh) (bufferType @elt) buffer i₀
 
-  value    ← compile (rename var i₀ ixf)
-  loop_2'  ← getBlock
+  value    <- compile (rename var i₀ ixf)
+  loop_2'  <- getBlock
 
   ptr ◃(≔) @elt▹ value
 
@@ -153,18 +153,18 @@ compile Fls =
   pure ConstFls
 
 compile (If cond tru fls) = do
-  if_then ← newBlock "if.then"
-  if_else ← newBlock "if.else"
-  if_cont ← newBlock "if.cont"
+  if_then <- newBlock "if.then"
+  if_else <- newBlock "if.else"
+  if_cont <- newBlock "if.cont"
 
-  condition ← compile cond
+  condition <- compile cond
   br condition if_then if_else
 
   let 
     block ∷ (Exp a, Label) → Codegen (Op, Label)
     block (val, label) = do
       setBlock label
-      foo ← compile val
+      foo <- compile val
       jmp if_cont
 
       -- This is important (see link) “The problem is that theifthen
@@ -174,11 +174,11 @@ compile (If cond tru fls) = do
       -- recursively could arbitrarily change the notion of the
       -- current block, we are required to get an up-to-date value for
       -- code that will set up the Phi node.”
-      label ← getBlock
+      label <- getBlock
       pure (foo, label)
 
-  true  ← block (tru, if_then)
-  false ← block (fls, if_else)
+  true  <- block (tru, if_then)
+  false <- block (fls, if_else)
   
   setBlock if_cont
 
@@ -187,35 +187,35 @@ compile (If cond tru fls) = do
 
 compile (While var condTest body init) = mdo
   -- Create blocks
-  entry       ← getBlock
-  while_cond  ← newBlock "while.cond"
-  while_body  ← newBlock "while.body"
-  while_post  ← newBlock "while.post"
+  entry       <- getBlock
+  while_cond  <- newBlock "while.cond"
+  while_body  <- newBlock "while.body"
+  while_post  <- newBlock "while.post"
 
   -- Compile the initial value of the while expression
-  init_val ← compile init
+  init_val <- compile init
   jmp while_cond
 
   -- TEST
   setBlock while_cond
-  val_1 ← φ (showExpType init) (init_val, entry)
+  val_1 <- φ (showExpType init) (init_val, entry)
                                (val_2,    while_body)
 
   -- When compiling
   --   While "%lam_1" (5 < "%lam_1") ("%lam_1" + 1) 0
   -- "%lam_1" is the variable bound by the binding construct While and
   -- must refer to the LLVM register "val_1"
-  --   val_1 ← φ …
+  --   val_1 <- φ …
   -- which is a fresh variable. So we replace all occurances of
   -- "%lam_1" in the conditional and body before compiling it.
-  keepGoing ← compile (rename var val_1 condTest)
+  keepGoing <- compile (rename var val_1 condTest)
   br keepGoing while_body while_post
 
   -- BODY
   setBlock while_body
 
   -- Same as with the conditional expression.
-  val_2     ← compile (rename var val_1 body)
+  val_2     <- compile (rename var val_1 body)
   jmp while_cond
 
   -- POST
@@ -230,12 +230,12 @@ compile (Len (MkArr len _ _)) = do
   compile len
 
 compile (UnOp (Un operator _) a) = do
-  reg ← compile a
+  reg <- compile a
   compileUnop operator reg
 
 compile (BinOp (Bin operator _) a b) = do
-  reg₁ ← compile a
-  reg₂ ← compile b
+  reg₁ <- compile a
+  reg₂ <- compile b
 
   compileBinop operator reg₁ reg₂
 
@@ -587,10 +587,10 @@ otp = map2 Xor
 -- --     (B, B) -> Just Refl
 -- --     (C, C) -> Just Refl
 -- --     -- (A (a1 :: Ty t1), A (a2 :: Ty t2)) -> do
--- --     --   Refl ← (≟) @t1 @t2
+-- --     --   Refl <- (≟) @t1 @t2
 -- --     --   pure Refl
 -- --     (P x1 y1, P x2 y2) -> do
--- --       Refl ← (≟) @ty₁ @ty₂
+-- --       Refl <- (≟) @ty₁ @ty₂
 -- --       pure Refl
 
 -- -- (·≟·) :: Ty (ty₁ :: Type) → Ty (ty₂ :: Type) → Maybe (ty₁ :~: ty₂)
@@ -601,11 +601,11 @@ otp = map2 Xor
 -- -- B   ·≟· B   = pure Refl
 -- -- C   ·≟· C   = pure Refl
 -- -- A x ·≟· A y = do
--- --   Refl ← x ·≟· y
+-- --   Refl <- x ·≟· y
 -- --   pure Refl
 -- -- -- P (x1 :: Ty a1) (x2 :: Ty a2) ·≟· P (y1 :: Ty b1) (y2 :: Ty b2) = do
--- -- --   Refl ← x1 ·≟· y1
--- -- --   Refl ← x2 ·≟· y2 
+-- -- --   Refl <- x1 ·≟· y1
+-- -- --   Refl <- x2 ·≟· y2 
 -- -- --   undefined 
 
 -- -- equal :: forall ty₁ ty₂. (GetTy ty₁, GetTy ty₂) => Exp ty₁ -> Exp ty₂ → Exp Bool
