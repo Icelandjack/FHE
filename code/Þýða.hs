@@ -25,8 +25,11 @@ import Formatting.ShortFormatters
 
 a = 1 + 2 + 3 :: Exp TInt8
 
-þýða :: Exp a -> HAHA (Identity Op)
-þýða = \case
+-- þýðaInstr :: Inst a -> InstrCont () 
+-- þýðaInstr = undefined 
+
+þýðaExp :: Exp a -> ExprCont (Identity Op)
+þýðaExp = \case
   MkInt8 val -> assign $
     Int 8  (fromIntegral val)
 
@@ -38,55 +41,56 @@ a = 1 + 2 + 3 :: Exp TInt8
   Fls -> assign EFls
 
   BinOp (Bin OpAdd _fn) a b -> do
-    var₁ <- þýða a
-    var₂ <- þýða b
-    mk (Binop Add var₁ var₂)
+    var₁ <- þýðaExp a
+    var₂ <- þýðaExp b
+    mkBinder (Binop Add var₁ var₂)
 
   BinOp (Bin OpMul _fn) a b -> do
-    var₁ <- þýða a
-    var₂ <- þýða b
-    mk (Binop Mul var₁ var₂)
+    var₁ <- þýðaExp a
+    var₂ <- þýðaExp b
+    mkBinder (Binop Mul var₁ var₂)
 
   -- MkArr 
   --  (Constant Get32 10)
   --  V₀
   --  (MkMul (MkVar V₀) (MkVar V₀))
-  MkArr len id body -> do
-    len' <- þýða len
-    uuu  <- þýða body
+  -- MkArr len id body -> do
+  -- --   len' <- þýða len
+  -- --   uuu  <- þýða body
 
-    -- Exp (Sca sca)
-    mk (For len' undefined)
+  -- --   -- Exp (Sca sca)
+  -- --   -- mk (For undefined undefined undefined)
+  --   mkNoVar undefined 
 
-  (traceShowId -> foo) -> error (show foo)
+  -- (traceShowId -> foo) -> error (show foo)
 
-co :: Prog Identity Op -> Codegen Op
+-- co :: Prog Identity Op -> Codegen Op
 co = \case
-  Ret (Identity a) -> do
-    terminate ("ret i32 "%op) a
-    pure a    
+  -- Ret (Identity a) -> do
+  --   terminate ("ret i32 "%op) a
+  --   pure a    
 
-  Assign ETru rest -> co $
-    Identity ConstTru `inst1` rest
+  -- Assign ETru rest -> co $
+  --   Identity ConstTru `inst1` rest
 
-  Assign EFls rest -> co $
-    Identity ConstFls `inst1` rest
+  -- Assign EFls rest -> co $
+  --   Identity ConstFls `inst1` rest
 
-  Assign (Int 32 n) rest -> co $
-    Identity (ConstNum (fromIntegral n)) `inst1` rest
+  -- Assign (Int 32 n) rest -> co $
+  --   Identity (ConstNum (fromIntegral n)) `inst1` rest
 
-  Assign (Int 8 n) rest -> co $
-    Identity (ConstNum8 (fromIntegral n)) `inst1` rest
+  -- Assign (Int 8 n) rest -> co $
+  --   Identity (ConstNum8 (fromIntegral n)) `inst1` rest
 
-  Binop Add (Identity a) (Identity b) rest -> do
-    x <- namedOp "add" ("add i32 "%sh%", "%sh) a b
-    co $ 
-      Identity x `inst1` rest
+  -- Binop Add (Identity a) (Identity b) rest -> do
+  --   x <- namedOp "add" ("add i32 "%sh%", "%sh) a b
+  --   co $ 
+  --     Identity x `inst1` rest
 
 compileAll :: Exp a -> IO ()
 compileAll exp = let
   haha :: Prog Identity Op
-  haha = runProgm (þýða exp)
+  haha = undefined -- runProgm (þýða exp)
 
   in putStrLn $ unlines $ execWriter $ genBody (execCodegen (co haha))
 
